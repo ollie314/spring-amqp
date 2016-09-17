@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2013 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import java.util.Map;
  *
  * @author Mark Pollack
  * @author Gary Russell
+ * @author Artem Bilan
  *
  * @see AmqpAdmin
  */
@@ -39,8 +40,12 @@ public abstract class AbstractExchange extends AbstractDeclarable implements Exc
 
 	private final Map<String, Object> arguments;
 
+	private volatile boolean delayed;
+
+	private boolean internal;
+
 	/**
-	 * Construct a new Exchange for bean usage.
+	 * Construct a new durable, non-auto-delete Exchange with the provided name.
 	 * @param name the name of the exchange.
 	 */
 	public AbstractExchange(String name) {
@@ -50,18 +55,23 @@ public abstract class AbstractExchange extends AbstractDeclarable implements Exc
 	/**
 	 * Construct a new Exchange, given a name, durability flag, auto-delete flag.
 	 * @param name the name of the exchange.
-	 * @param durable true if we are declaring a durable exchange (the exchange will survive a server restart)
-	 * @param autoDelete true if the server should delete the exchange when it is no longer in use
+	 * @param durable true if we are declaring a durable exchange (the exchange will
+	 * survive a server restart)
+	 * @param autoDelete true if the server should delete the exchange when it is no
+	 * longer in use
 	 */
 	public AbstractExchange(String name, boolean durable, boolean autoDelete) {
 		this(name, durable, autoDelete, null);
 	}
 
 	/**
-	 * Construct a new Exchange, given a name, durability flag, and auto-delete flag, and arguments.
+	 * Construct a new Exchange, given a name, durability flag, and auto-delete flag, and
+	 * arguments.
 	 * @param name the name of the exchange.
-	 * @param durable true if we are declaring a durable exchange (the exchange will survive a server restart)
-	 * @param autoDelete true if the server should delete the exchange when it is no longer in use
+	 * @param durable true if we are declaring a durable exchange (the exchange will
+	 * survive a server restart)
+	 * @param autoDelete true if the server should delete the exchange when it is no
+	 * longer in use
 	 * @param arguments the arguments used to declare the exchange
 	 */
 	public AbstractExchange(String name, boolean durable, boolean autoDelete, Map<String, Object> arguments) {
@@ -77,38 +87,76 @@ public abstract class AbstractExchange extends AbstractDeclarable implements Exc
 		}
 	}
 
+	@Override
 	public abstract String getType();
 
+	@Override
 	public String getName() {
-		return name;
+		return this.name;
 	}
 
+	@Override
 	public boolean isDurable() {
-		return durable;
+		return this.durable;
 	}
 
+	@Override
 	public boolean isAutoDelete() {
-		return autoDelete;
+		return this.autoDelete;
 	}
 
+	/**
+	 * Add an argument to the arguments.
+	 * @param argName the argument name.
+	 * @param argValue the argument value.
+	 */
 	protected synchronized void addArgument(String argName, Object argValue) {
 		this.arguments.put(argName, argValue);
 	}
-	/**
-	 * Return the collection of arbitrary arguments to use when declaring an exchange.
-	 * @return the collection of arbitrary arguments to use when declaring an exchange.
-	 */
+
+	@Override
 	public Map<String, Object> getArguments() {
-		return arguments;
+		return this.arguments;
+	}
+
+	@Override
+	public boolean isDelayed() {
+		return this.delayed;
+	}
+
+	/**
+	 * Set the delayed flag.
+	 * @param delayed the delayed.
+	 * @see Exchange#isDelayed()
+	 * @since 1.6
+	 */
+	public void setDelayed(boolean delayed) {
+		this.delayed = delayed;
+	}
+
+	@Override
+	public boolean isInternal() {
+		return this.internal;
+	}
+
+	/**
+	 * Set the internal flag.
+	 * @param internal the internal.
+	 * @see Exchange#isInternal()
+	 * @since 1.6
+	 */
+	public void setInternal(boolean internal) {
+		this.internal = internal;
 	}
 
 	@Override
 	public String toString() {
-		return "Exchange [name=" + name +
-						 ", type=" + this.getType() +
-						 ", durable=" + durable +
-						 ", autoDelete=" + autoDelete +
-						 ", arguments="	+ arguments + "]";
+		return "Exchange [name=" + this.name +
+						 ", type=" + getType() +
+						 ", durable=" + this.durable +
+						 ", autoDelete=" + this.autoDelete +
+						 ", internal=" + this.internal +
+						 ", arguments="	+ this.arguments + "]";
 	}
 
 }

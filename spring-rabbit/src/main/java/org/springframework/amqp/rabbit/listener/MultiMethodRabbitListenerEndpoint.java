@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener;
 
 import java.lang.reflect.Method;
@@ -33,11 +34,11 @@ public class MultiMethodRabbitListenerEndpoint extends MethodRabbitListenerEndpo
 
 	private final List<Method> methods;
 
-	private final Object bean;
+	private DelegatingInvocableHandler delegatingHandler;
 
 	public MultiMethodRabbitListenerEndpoint(List<Method> methods, Object bean) {
 		this.methods = methods;
-		this.bean = bean;
+		setBean(bean);
 	}
 
 	@Override
@@ -47,7 +48,9 @@ public class MultiMethodRabbitListenerEndpoint extends MethodRabbitListenerEndpo
 			invocableHandlerMethods.add(getMessageHandlerMethodFactory()
 					.createInvocableHandlerMethod(getBean(), method));
 		}
-		return new HandlerAdapter(new DelegatingInvocableHandler(invocableHandlerMethods, this.bean));
+		this.delegatingHandler = new DelegatingInvocableHandler(invocableHandlerMethods, getBean(), getResolver(),
+				getBeanExpressionContext());
+		return new HandlerAdapter(this.delegatingHandler);
 	}
 
 }

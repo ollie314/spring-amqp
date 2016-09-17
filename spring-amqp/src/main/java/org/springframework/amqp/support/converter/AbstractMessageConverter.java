@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2013 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.support.converter;
 
 import java.util.UUID;
@@ -40,17 +44,18 @@ public abstract class AbstractMessageConverter implements MessageConverter {
 	 * @return the flag value
 	 */
 	protected boolean isCreateMessageIds() {
-		return createMessageIds;
+		return this.createMessageIds;
 	}
 
+	@Override
 	public final Message toMessage(Object object, MessageProperties messageProperties)
 			throws MessageConversionException {
-		if (messageProperties==null) {
+		if (messageProperties == null) {
 			messageProperties = new MessageProperties();
 		}
 		Message message = createMessage(object, messageProperties);
 		messageProperties = message.getMessageProperties();
-		if (this.createMessageIds && messageProperties.getMessageId()==null) {
+		if (this.createMessageIds && messageProperties.getMessageId() == null) {
 			messageProperties.setMessageId(UUID.randomUUID().toString());
 		}
 		return message;
@@ -66,6 +71,7 @@ public abstract class AbstractMessageConverter implements MessageConverter {
 	 */
 	protected abstract Message createMessage(Object object, MessageProperties messageProperties);
 
+	@Override
 	public abstract Object fromMessage(Message message) throws MessageConversionException;
 
 }

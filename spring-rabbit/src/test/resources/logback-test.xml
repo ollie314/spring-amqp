@@ -7,10 +7,11 @@
 		</encoder>
 	</appender>
 
-	<appender name="AMQP" class="org.springframework.amqp.rabbit.logback.AmqpAppender">
+	<appender name="AMQP" class="org.springframework.amqp.rabbit.logback.AmqpAppenderIntegrationTests$EnhancedAppender">
 		<layout>
 			<pattern><![CDATA[ %d %p %t [%c] - <%m>%n ]]></pattern>
 		</layout>
+		<addresses>localhost:5672</addresses>
 		<abbreviation>36</abbreviation>
 		<applicationId>AmqpAppenderTest</applicationId>
 		<routingKeyPattern>%property{applicationId}.%c.%p</routingKeyPattern>
@@ -18,6 +19,9 @@
 		<charset>UTF-8</charset>
 		<durable>false</durable>
 		<deliveryMode>NON_PERSISTENT</deliveryMode>
+		<declareExchange>true</declareExchange>
+		<clientConnectionProperties>foo:bar,baz:qux</clientConnectionProperties>
+		<foo>bar</foo>
 	</appender>
 
 	<logger name="org.springframework.amqp.rabbit.logback" level="DEBUG" additivity="false">

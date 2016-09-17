@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2013 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.core;
@@ -26,8 +29,13 @@ import org.springframework.util.Assert;
  * @author Mark Pollack
  * @author Mark Fisher
  * @author Dave Syer
+ * @author Gary Russell
  */
 public final class BindingBuilder {
+
+	private BindingBuilder() {
+		super();
+	}
 
 	public static DestinationConfigurer bind(Queue queue) {
 		return new DestinationConfigurer(queue.getName(), DestinationType.QUEUE);
@@ -37,7 +45,15 @@ public final class BindingBuilder {
 		return new DestinationConfigurer(exchange.getName(), DestinationType.EXCHANGE);
 	}
 
-	public static class DestinationConfigurer {
+	private static Map<String, Object> createMapForKeys(String... keys) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		for (String key : keys) {
+			map.put(key, null);
+		}
+		return map;
+	}
+
+	public static final class DestinationConfigurer {
 
 		protected final String name;
 		protected final DestinationType type;
@@ -68,7 +84,7 @@ public final class BindingBuilder {
 		}
 	}
 
-	public static class HeadersExchangeMapConfigurer {
+	public static final class HeadersExchangeMapConfigurer {
 
 		protected final DestinationConfigurer destination;
 
@@ -99,7 +115,7 @@ public final class BindingBuilder {
 			return new HeadersExchangeMapBindingCreator(headerValues, true);
 		}
 
-		public class HeadersExchangeSingleValueBindingCreator {
+		public final class HeadersExchangeSingleValueBindingCreator {
 
 			private final String key;
 
@@ -109,18 +125,21 @@ public final class BindingBuilder {
 			}
 
 			public Binding exists() {
-				return new Binding(destination.name, destination.type, exchange.getName(), "",
-						createMapForKeys(this.key));
+				return new Binding(HeadersExchangeMapConfigurer.this.destination.name,
+						HeadersExchangeMapConfigurer.this.destination.type,
+						HeadersExchangeMapConfigurer.this.exchange.getName(), "", createMapForKeys(this.key));
 			}
 
 			public Binding matches(Object value) {
 				Map<String, Object> map = new HashMap<String, Object>();
-				map.put(key, value);
-				return new Binding(destination.name, destination.type, exchange.getName(), "", map);
+				map.put(this.key, value);
+				return new Binding(HeadersExchangeMapConfigurer.this.destination.name,
+						HeadersExchangeMapConfigurer.this.destination.type,
+						HeadersExchangeMapConfigurer.this.exchange.getName(), "", map);
 			}
 		}
 
-		public class HeadersExchangeKeysBindingCreator {
+		public final class HeadersExchangeKeysBindingCreator {
 
 			private final Map<String, Object> headerMap;
 
@@ -131,11 +150,13 @@ public final class BindingBuilder {
 			}
 
 			public Binding exist() {
-				return new Binding(destination.name, destination.type, exchange.getName(), "", this.headerMap);
+				return new Binding(HeadersExchangeMapConfigurer.this.destination.name,
+						HeadersExchangeMapConfigurer.this.destination.type,
+						HeadersExchangeMapConfigurer.this.exchange.getName(), "", this.headerMap);
 			}
 		}
 
-		public class HeadersExchangeMapBindingCreator {
+		public final class HeadersExchangeMapBindingCreator {
 
 			private final Map<String, Object> headerMap;
 
@@ -146,7 +167,9 @@ public final class BindingBuilder {
 			}
 
 			public Binding match() {
-				return new Binding(destination.name, destination.type, exchange.getName(), "", this.headerMap);
+				return new Binding(HeadersExchangeMapConfigurer.this.destination.name,
+						HeadersExchangeMapConfigurer.this.destination.type,
+						HeadersExchangeMapConfigurer.this.exchange.getName(), "", this.headerMap);
 			}
 		}
 	}
@@ -163,7 +186,7 @@ public final class BindingBuilder {
 		}
 	}
 
-	public static class TopicExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<TopicExchange> {
+	public static final class TopicExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<TopicExchange> {
 
 		private TopicExchangeRoutingKeyConfigurer(DestinationConfigurer destination, TopicExchange exchange) {
 			super(destination, exchange.getName());
@@ -171,16 +194,16 @@ public final class BindingBuilder {
 
 		public Binding with(String routingKey) {
 			return new Binding(destination.name, destination.type, exchange, routingKey,
-					Collections.<String, Object> emptyMap());
+					Collections.<String, Object>emptyMap());
 		}
 
 		public Binding with(Enum<?> routingKeyEnum) {
 			return new Binding(destination.name, destination.type, exchange, routingKeyEnum.toString(),
-					Collections.<String, Object> emptyMap());
+					Collections.<String, Object>emptyMap());
 		}
 	}
 
-	public static class GenericExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<TopicExchange> {
+	public static final class GenericExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<TopicExchange> {
 
 		private GenericExchangeRoutingKeyConfigurer(DestinationConfigurer destination, Exchange exchange) {
 			super(destination, exchange.getName());
@@ -207,18 +230,18 @@ public final class BindingBuilder {
 		}
 
 		public Binding and(Map<String, Object> map) {
-			return new Binding(configurer.destination.name, configurer.destination.type, configurer.exchange,
-					routingKey, map);
+			return new Binding(this.configurer.destination.name, this.configurer.destination.type, this.configurer.exchange,
+					this.routingKey, map);
 		}
 
 		public Binding noargs() {
-			return new Binding(configurer.destination.name, configurer.destination.type, configurer.exchange,
-					routingKey, Collections.<String, Object> emptyMap());
+			return new Binding(this.configurer.destination.name, this.configurer.destination.type, this.configurer.exchange,
+					this.routingKey, Collections.<String, Object>emptyMap());
 		}
 
 	}
 
-	public static class DirectExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<DirectExchange> {
+	public static final class DirectExchangeRoutingKeyConfigurer extends AbstractRoutingKeyConfigurer<DirectExchange> {
 
 		private DirectExchangeRoutingKeyConfigurer(DestinationConfigurer destination, DirectExchange exchange) {
 			super(destination, exchange.getName());
@@ -226,26 +249,18 @@ public final class BindingBuilder {
 
 		public Binding with(String routingKey) {
 			return new Binding(destination.name, destination.type, exchange, routingKey,
-					Collections.<String, Object> emptyMap());
+					Collections.<String, Object>emptyMap());
 		}
 
 		public Binding with(Enum<?> routingKeyEnum) {
 			return new Binding(destination.name, destination.type, exchange, routingKeyEnum.toString(),
-					Collections.<String, Object> emptyMap());
+					Collections.<String, Object>emptyMap());
 		}
 
 		public Binding withQueueName() {
 			return new Binding(destination.name, destination.type, exchange, destination.name,
-					Collections.<String, Object> emptyMap());
+					Collections.<String, Object>emptyMap());
 		}
-	}
-
-	private static Map<String, Object> createMapForKeys(String... keys) {
-		Map<String, Object> map = new HashMap<String, Object>();
-		for (String key : keys) {
-			map.put(key, null);
-		}
-		return map;
 	}
 
 }

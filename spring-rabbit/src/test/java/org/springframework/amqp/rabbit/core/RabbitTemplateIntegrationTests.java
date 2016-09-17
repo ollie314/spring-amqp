@@ -1,20 +1,25 @@
 /*
- * Copyright 2010-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.core;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -29,6 +34,7 @@ import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -41,7 +47,7 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -60,24 +66,23 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Matchers;
 import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.AmqpIOException;
 import org.springframework.amqp.core.Address;
 import org.springframework.amqp.core.AmqpMessageReturnedException;
 import org.springframework.amqp.core.Message;
-import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.ReceiveAndReplyCallback;
 import org.springframework.amqp.core.ReceiveAndReplyMessageCallback;
 import org.springframework.amqp.core.ReplyToAddressCallback;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.ChannelListener;
 import org.springframework.amqp.rabbit.connection.Connection;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactoryUtils;
+import org.springframework.amqp.rabbit.connection.ConnectionListener;
 import org.springframework.amqp.rabbit.connection.RabbitResourceHolder;
 import org.springframework.amqp.rabbit.connection.SingleConnectionFactory;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
@@ -94,6 +99,7 @@ import org.springframework.amqp.support.postprocessor.GZipPostProcessor;
 import org.springframework.amqp.utils.SerializationUtils;
 import org.springframework.amqp.utils.test.TestUtils;
 import org.springframework.beans.DirectFieldAccessor;
+import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -107,20 +113,23 @@ import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationAdapter;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.ReflectionUtils;
-import org.springframework.util.ReflectionUtils.FieldCallback;
-import org.springframework.util.ReflectionUtils.FieldFilter;
 
+import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.AMQP.BasicProperties;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Consumer;
 import com.rabbitmq.client.Envelope;
 import com.rabbitmq.client.GetResponse;
+import com.rabbitmq.client.Method;
 import com.rabbitmq.client.ShutdownSignalException;
+import com.rabbitmq.client.impl.AMQImpl;
 
 /**
  * @author Dave Syer
@@ -141,6 +150,11 @@ public class RabbitTemplateIntegrationTests {
 
 	private static final Queue REPLY_QUEUE = new Queue("test.reply.queue");
 
+	@Rule
+	public BrokerRunning brokerIsRunning = BrokerRunning.isRunningWithEmptyQueues(ROUTE, REPLY_QUEUE.getName());
+
+	private CachingConnectionFactory connectionFactory;
+
 	private RabbitTemplate template;
 
 	@Autowired
@@ -154,12 +168,17 @@ public class RabbitTemplateIntegrationTests {
 
 	@Before
 	public void create() {
-		final CachingConnectionFactory connectionFactory = new CachingConnectionFactory();
+		this.connectionFactory = new CachingConnectionFactory();
 		connectionFactory.setHost("localhost");
 		connectionFactory.setPort(BrokerTestUtils.getPort());
 		connectionFactory.setPublisherReturns(true);
-		template = new RabbitTemplate(connectionFactory);
-		template.setSendConnectionFactorySelectorExpression(new LiteralExpression("foo"));
+		this.template = new RabbitTemplate(connectionFactory);
+		this.template.setSendConnectionFactorySelectorExpression(new LiteralExpression("foo"));
+		BeanFactory bf = mock(BeanFactory.class);
+		ConnectionFactory cf = mock(ConnectionFactory.class);
+		when(cf.getUsername()).thenReturn("guest");
+		when(bf.getBean("cf")).thenReturn(cf);
+		this.template.setBeanFactory(bf);
 	}
 
 	@After
@@ -168,9 +187,6 @@ public class RabbitTemplateIntegrationTests {
 		this.brokerIsRunning.removeTestQueues();
 	}
 
-	@Rule
-	public BrokerRunning brokerIsRunning = BrokerRunning.isRunningWithEmptyQueues(ROUTE, REPLY_QUEUE.getName());
-
 	@Test
 	public void testReceiveNonBlocking() throws Exception {
 		this.template.convertAndSend(ROUTE, "nonblock");
@@ -178,6 +194,7 @@ public class RabbitTemplateIntegrationTests {
 		String out = (String) this.template.receiveAndConvert(ROUTE);
 		while (n++ < 100 && out == null) {
 			Thread.sleep(100);
+			out = (String) this.template.receiveAndConvert(ROUTE);
 		}
 		assertNotNull(out);
 		assertEquals("nonblock", out);
@@ -237,27 +254,20 @@ public class RabbitTemplateIntegrationTests {
 
 		class MockChannel extends PublisherCallbackChannelImpl {
 
-			public MockChannel(Channel delegate) {
+			MockChannel(Channel delegate) {
 				super(delegate);
 			}
 
 			@Override
-			public String basicConsume(String queue, Consumer callback)
-					throws IOException {
+			public String basicConsume(String queue, Consumer callback) throws IOException {
 				return super.basicConsume(queue, new MockConsumer(callback));
 			}
 
 		}
 
 		Connection connection = spy(connectionFactory.createConnection());
-		when(connection.createChannel(anyBoolean())).then(new Answer<Channel>() {
-
-			@Override
-			public Channel answer(InvocationOnMock invocation) throws Throwable {
-				return new MockChannel((Channel) invocation.callRealMethod());
-			}
-
-		});
+		when(connection.createChannel(anyBoolean())).then(
+				invocation -> new MockChannel((Channel) invocation.callRealMethod()));
 
 		DirectFieldAccessor dfa = new DirectFieldAccessor(connectionFactory);
 		dfa.setPropertyValue("connection", connection);
@@ -269,11 +279,12 @@ public class RabbitTemplateIntegrationTests {
 
 	@Test
 	public void testReceiveBlocking() throws Exception {
+		this.template.setUserIdExpressionString("@cf.username");
 		this.template.convertAndSend(ROUTE, "block");
-		this.template.setReceiveTimeout(10000);
-		String out = (String) this.template.receiveAndConvert(ROUTE);
-		assertNotNull(out);
-		assertEquals("block", out);
+		Message received = this.template.receive(ROUTE, 10000);
+		assertNotNull(received);
+		assertEquals("block", new String(received.getBody()));
+		assertThat(received.getMessageProperties().getReceivedUserId(), equalTo("guest"));
 		this.template.setReceiveTimeout(0);
 		assertNull(this.template.receive(ROUTE));
 	}
@@ -281,8 +292,7 @@ public class RabbitTemplateIntegrationTests {
 	@Test
 	public void testReceiveBlockingNoTimeout() throws Exception {
 		this.template.convertAndSend(ROUTE, "blockNoTO");
-		this.template.setReceiveTimeout(-1);
-		String out = (String) this.template.receiveAndConvert(ROUTE);
+		String out = (String) this.template.receiveAndConvert(ROUTE, -1);
 		assertNotNull(out);
 		assertEquals("blockNoTO", out);
 		this.template.setReceiveTimeout(1); // test the no message after timeout path
@@ -304,8 +314,8 @@ public class RabbitTemplateIntegrationTests {
 	@Test
 	public void testReceiveBlockingGlobalTx() throws Exception {
 		template.convertAndSend(ROUTE, "blockGTXNoTO");
-		RabbitResourceHolder resourceHolder = ConnectionFactoryUtils.getTransactionalResourceHolder(
-				this.template.getConnectionFactory(), true);
+		RabbitResourceHolder resourceHolder = ConnectionFactoryUtils
+				.getTransactionalResourceHolder(this.template.getConnectionFactory(), true);
 		TransactionSynchronizationManager.setActualTransactionActive(true);
 		ConnectionFactoryUtils.bindResourceToTransaction(resourceHolder, this.template.getConnectionFactory(), true);
 		template.setReceiveTimeout(-1);
@@ -322,12 +332,14 @@ public class RabbitTemplateIntegrationTests {
 
 	@Test
 	public void testSendToNonExistentAndThenReceive() throws Exception {
-		// If transacted then the commit fails on send, so we get a nice synchronous exception
+		// If transacted then the commit fails on send, so we get a nice synchronous
+		// exception
 		template.setChannelTransacted(true);
 		try {
 			template.convertAndSend("", "no.such.route", "message");
 			// fail("Expected AmqpException");
-		} catch (AmqpException e) {
+		}
+		catch (AmqpException e) {
 			// e.printStackTrace();
 		}
 		// Now send the real message, and all should be well...
@@ -340,13 +352,10 @@ public class RabbitTemplateIntegrationTests {
 
 	@Test
 	public void testSendAndReceiveWithPostProcessor() throws Exception {
-		template.convertAndSend(ROUTE, (Object)"message", new MessagePostProcessor() {
-			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				message.getMessageProperties().setContentType("text/other");
-				// message.getMessageProperties().setUserId("foo");
-				return message;
-			}
+		template.convertAndSend(ROUTE, (Object) "message", message -> {
+			message.getMessageProperties().setContentType("text/other");
+			// message.getMessageProperties().setUserId("foo");
+			return message;
 		});
 		String result = (String) template.receiveAndConvert(ROUTE);
 		assertEquals("message", result);
@@ -407,20 +416,18 @@ public class RabbitTemplateIntegrationTests {
 		// Rollback of manual receive is implicit because the channel is
 		// closed...
 		try {
-			template.execute(new ChannelCallback<String>() {
-				@Override
-				public String doInRabbit(Channel channel) throws Exception {
-					// Switch off the auto-ack so the message is rolled back...
-					channel.basicGet(ROUTE, false);
-					// This is the way to rollback with a cached channel (it is
-					// the way the ConnectionFactoryUtils
-					// handles it via a synchronization):
-					channel.basicRecover(true);
-					throw new PlannedException();
-				}
+			template.execute(channel -> {
+				// Switch off the auto-ack so the message is rolled back...
+				channel.basicGet(ROUTE, false);
+				// This is the way to rollback with a cached channel (it is
+				// the way the ConnectionFactoryUtils
+				// handles it via a synchronization):
+				channel.basicRecover(true);
+				throw new PlannedException();
 			});
 			fail("Expected PlannedException");
-		} catch (Exception e) {
+		}
+		catch (Exception e) {
 			assertTrue(e.getCause() instanceof PlannedException);
 		}
 		String result = (String) template.receiveAndConvert(ROUTE);
@@ -433,19 +440,15 @@ public class RabbitTemplateIntegrationTests {
 	public void testSendAndReceiveInCallback() throws Exception {
 		template.convertAndSend(ROUTE, "message");
 		final MessagePropertiesConverter messagePropertiesConverter = new DefaultMessagePropertiesConverter();
-		String result = template.execute(new ChannelCallback<String>() {
-
-			@Override
-			public String doInRabbit(Channel channel) throws Exception {
-				// We need noAck=false here for the message to be expicitly
-				// acked
-				GetResponse response = channel.basicGet(ROUTE, false);
-				MessageProperties messageProps = messagePropertiesConverter.toMessageProperties(
-						response.getProps(), response.getEnvelope(), "UTF-8");
-				// Explicit ack
-				channel.basicAck(response.getEnvelope().getDeliveryTag(), false);
-				return (String) new SimpleMessageConverter().fromMessage(new Message(response.getBody(), messageProps));
-			}
+		String result = template.execute(channel -> {
+			// We need noAck=false here for the message to be expicitly
+			// acked
+			GetResponse response = channel.basicGet(ROUTE, false);
+			MessageProperties messageProps = messagePropertiesConverter.toMessageProperties(response.getProps(),
+					response.getEnvelope(), "UTF-8");
+			// Explicit ack
+			channel.basicAck(response.getEnvelope().getDeliveryTag(), false);
+			return (String) new SimpleMessageConverter().fromMessage(new Message(response.getBody(), messageProps));
 		});
 		assertEquals("message", result);
 		result = (String) template.receiveAndConvert(ROUTE);
@@ -457,12 +460,7 @@ public class RabbitTemplateIntegrationTests {
 		template.convertAndSend(ROUTE, "message");
 		template.setChannelTransacted(true);
 		String result = new TransactionTemplate(new TestTransactionManager())
-				.execute(new TransactionCallback<String>() {
-					@Override
-					public String doInTransaction(TransactionStatus status) {
-						return (String) template.receiveAndConvert(ROUTE);
-					}
-				});
+				.execute(status -> (String) template.receiveAndConvert(ROUTE));
 		assertEquals("message", result);
 		result = (String) template.receiveAndConvert(ROUTE);
 		assertEquals(null, result);
@@ -474,12 +472,7 @@ public class RabbitTemplateIntegrationTests {
 		// Should just result in auto-ack (not synched with external tx)
 		template.setChannelTransacted(true);
 		String result = new TransactionTemplate(new TestTransactionManager())
-				.execute(new TransactionCallback<String>() {
-					@Override
-					public String doInTransaction(TransactionStatus status) {
-						return (String) template.receiveAndConvert(ROUTE);
-					}
-				});
+				.execute(status -> (String) template.receiveAndConvert(ROUTE));
 		assertEquals("message", result);
 		result = (String) template.receiveAndConvert(ROUTE);
 		assertEquals(null, result);
@@ -491,15 +484,13 @@ public class RabbitTemplateIntegrationTests {
 		template.setChannelTransacted(true);
 		template.convertAndSend(ROUTE, "message");
 		try {
-			new TransactionTemplate(new TestTransactionManager()).execute(new TransactionCallback<String>() {
-				@Override
-				public String doInTransaction(TransactionStatus status) {
-					template.receiveAndConvert(ROUTE);
-					throw new PlannedException();
-				}
+			new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+				template.receiveAndConvert(ROUTE);
+				throw new PlannedException();
 			});
 			fail("Expected PlannedException");
-		} catch (PlannedException e) {
+		}
+		catch (PlannedException e) {
 			// Expected
 		}
 		String result = (String) template.receiveAndConvert(ROUTE);
@@ -514,15 +505,13 @@ public class RabbitTemplateIntegrationTests {
 		template.setChannelTransacted(false);
 		template.convertAndSend(ROUTE, "message");
 		try {
-			new TransactionTemplate(new TestTransactionManager()).execute(new TransactionCallback<String>() {
-				@Override
-				public String doInTransaction(TransactionStatus status) {
-					template.receiveAndConvert(ROUTE);
-					throw new PlannedException();
-				}
+			new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+				template.receiveAndConvert(ROUTE);
+				throw new PlannedException();
 			});
 			fail("Expected PlannedException");
-		} catch (PlannedException e) {
+		}
+		catch (PlannedException e) {
 			// Expected
 		}
 		// No rollback
@@ -533,12 +522,9 @@ public class RabbitTemplateIntegrationTests {
 	@Test
 	public void testSendInExternalTransaction() throws Exception {
 		template.setChannelTransacted(true);
-		new TransactionTemplate(new TestTransactionManager()).execute(new TransactionCallback<Void>() {
-			@Override
-			public Void doInTransaction(TransactionStatus status) {
-				template.convertAndSend(ROUTE, "message");
-				return null;
-			}
+		new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+			template.convertAndSend(ROUTE, "message");
+			return null;
 		});
 		String result = (String) template.receiveAndConvert(ROUTE);
 		assertEquals("message", result);
@@ -550,15 +536,13 @@ public class RabbitTemplateIntegrationTests {
 	public void testSendInExternalTransactionWithRollback() throws Exception {
 		template.setChannelTransacted(true);
 		try {
-			new TransactionTemplate(new TestTransactionManager()).execute(new TransactionCallback<Void>() {
-				@Override
-				public Void doInTransaction(TransactionStatus status) {
-					template.convertAndSend(ROUTE, "message");
-					throw new PlannedException();
-				}
+			new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+				template.convertAndSend(ROUTE, "message");
+				throw new PlannedException();
 			});
 			fail("Expected PlannedException");
-		} catch (PlannedException e) {
+		}
+		catch (PlannedException e) {
 			// Expected
 		}
 		String result = (String) template.receiveAndConvert(ROUTE);
@@ -574,23 +558,18 @@ public class RabbitTemplateIntegrationTests {
 		template.setQueue(ROUTE);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<Message> received = executor.submit(new Callable<Message>() {
-
-			@Override
-			public Message call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive();
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<Message> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive();
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return message;
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return message;
 		});
 		Message message = new Message("test-message".getBytes(), new MessageProperties());
 		Message reply = template.sendAndReceive(message);
@@ -613,34 +592,21 @@ public class RabbitTemplateIntegrationTests {
 		exec.afterPropertiesSet();
 		connectionFactory.setExecutor(exec);
 		final Field[] fields = new Field[1];
-		ReflectionUtils.doWithFields(RabbitTemplate.class, new FieldCallback() {
-			@Override
-			public void doWith(Field field) throws IllegalArgumentException,
-					IllegalAccessException {
-				field.setAccessible(true);
-				fields[0] = field;
-			}
-		}, new FieldFilter() {
-			@Override
-			public boolean matches(Field field) {
-				return field.getName().equals("logger");
-			}
-		});
+		ReflectionUtils.doWithFields(RabbitTemplate.class, field -> {
+			field.setAccessible(true);
+			fields[0] = field;
+		}, field -> field.getName().equals("logger"));
 		Log logger = Mockito.mock(Log.class);
 		when(logger.isTraceEnabled()).thenReturn(true);
 
 		final AtomicBoolean execConfiguredOk = new AtomicBoolean();
 
-		doAnswer(new Answer<Object>(){
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				String log = (String) invocation.getArguments()[0];
-				if (log.startsWith("Message received") &&
-						Thread.currentThread().getName().startsWith(execName)) {
-					execConfiguredOk.set(true);
-				}
-				return null;
+		doAnswer(invocation -> {
+			String log = (String) invocation.getArguments()[0];
+			if (log.startsWith("Message received") && Thread.currentThread().getName().startsWith(execName)) {
+				execConfiguredOk.set(true);
 			}
+			return null;
 		}).when(logger).trace(Mockito.anyString());
 		final RabbitTemplate template = new RabbitTemplate(connectionFactory);
 		ReflectionUtils.setField(fields[0], template, logger);
@@ -648,23 +614,18 @@ public class RabbitTemplateIntegrationTests {
 		template.setQueue(ROUTE);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<Message> received = executor.submit(new Callable<Message>() {
-
-			@Override
-			public Message call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive();
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<Message> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive();
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return message;
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return message;
 		});
 		Message message = new Message("test-message".getBytes(), new MessageProperties());
 		Message reply = template.sendAndReceive(message);
@@ -686,23 +647,18 @@ public class RabbitTemplateIntegrationTests {
 		final RabbitTemplate template = new RabbitTemplate(cachingConnectionFactory);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<Message> received = executor.submit(new Callable<Message>() {
-
-			@Override
-			public Message call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<Message> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return message;
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return message;
 		});
 		Message message = new Message("test-message".getBytes(), new MessageProperties());
 		Message reply = template.sendAndReceive(ROUTE, message);
@@ -722,23 +678,18 @@ public class RabbitTemplateIntegrationTests {
 		final RabbitTemplate template = new RabbitTemplate(cachingConnectionFactory);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<Message> received = executor.submit(new Callable<Message>() {
-
-			@Override
-			public Message call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<Message> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return message;
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return message;
 		});
 		Message message = new Message("test-message".getBytes(), new MessageProperties());
 		Message reply = template.sendAndReceive("", ROUTE, message);
@@ -760,23 +711,18 @@ public class RabbitTemplateIntegrationTests {
 		template.setQueue(ROUTE);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive();
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive();
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
 		String result = (String) template.convertSendAndReceive("message");
 		assertEquals("message", received.get(1000, TimeUnit.MILLISECONDS));
@@ -791,23 +737,18 @@ public class RabbitTemplateIntegrationTests {
 	public void testAtomicSendAndReceiveWithConversionUsingRoutingKey() throws Exception {
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
 		String result = (String) template.convertSendAndReceive(ROUTE, "message");
 		assertEquals("message", received.get(1000, TimeUnit.MILLISECONDS));
@@ -821,23 +762,18 @@ public class RabbitTemplateIntegrationTests {
 	public void testAtomicSendAndReceiveWithConversionUsingExchangeAndRoutingKey() throws Exception {
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
 		String result = (String) template.convertSendAndReceive("", ROUTE, "message");
 		assertEquals("message", received.get(1000, TimeUnit.MILLISECONDS));
@@ -856,34 +792,26 @@ public class RabbitTemplateIntegrationTests {
 		template.setQueue(ROUTE);
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive();
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive();
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
-		String result = (String) template.convertSendAndReceive((Object) "message", new MessagePostProcessor() {
-			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				try {
-					byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
-					return new Message(newBody, message.getMessageProperties());
-				}
-				catch (Exception e) {
-					throw new AmqpException("unexpected failure in test", e);
-				}
+		String result = (String) template.convertSendAndReceive((Object) "message", message -> {
+			try {
+				byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
+				return new Message(newBody, message.getMessageProperties());
+			}
+			catch (Exception e) {
+				throw new AmqpException("unexpected failure in test", e);
 			}
 		});
 		assertEquals("MESSAGE", received.get(1000, TimeUnit.MILLISECONDS));
@@ -898,34 +826,26 @@ public class RabbitTemplateIntegrationTests {
 	public void testAtomicSendAndReceiveWithConversionAndMessagePostProcessorUsingRoutingKey() throws Exception {
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
-		String result = (String) template.convertSendAndReceive(ROUTE, (Object) "message", new MessagePostProcessor() {
-			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				try {
-					byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
-					return new Message(newBody, message.getMessageProperties());
-				}
-				catch (Exception e) {
-					throw new AmqpException("unexpected failure in test", e);
-				}
+		String result = (String) template.convertSendAndReceive(ROUTE, (Object) "message", message -> {
+			try {
+				byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
+				return new Message(newBody, message.getMessageProperties());
+			}
+			catch (Exception e) {
+				throw new AmqpException("unexpected failure in test", e);
 			}
 		});
 		assertEquals("MESSAGE", received.get(1000, TimeUnit.MILLISECONDS));
@@ -936,38 +856,30 @@ public class RabbitTemplateIntegrationTests {
 	}
 
 	@Test
-	public void testAtomicSendAndReceiveWithConversionAndMessagePostProcessorUsingExchangeAndRoutingKey() throws Exception {
+	public void testAtomicSendAndReceiveWithConversionAndMessagePostProcessorUsingExchangeAndRoutingKey()
+			throws Exception {
 		ExecutorService executor = Executors.newFixedThreadPool(1);
 		// Set up a consumer to respond to our producer
-		Future<String> received = executor.submit(new Callable<String>() {
-
-			@Override
-			public String call() throws Exception {
-				Message message = null;
-				for (int i = 0; i < 10; i++) {
-					message = template.receive(ROUTE);
-					if (message != null) {
-						break;
-					}
-					Thread.sleep(100L);
+		Future<String> received = executor.submit(() -> {
+			Message message = null;
+			for (int i = 0; i < 10; i++) {
+				message = template.receive(ROUTE);
+				if (message != null) {
+					break;
 				}
-				assertNotNull("No message received", message);
-				template.send(message.getMessageProperties().getReplyTo(), message);
-				return (String) template.getMessageConverter().fromMessage(message);
+				Thread.sleep(100L);
 			}
-
+			assertNotNull("No message received", message);
+			template.send(message.getMessageProperties().getReplyTo(), message);
+			return (String) template.getMessageConverter().fromMessage(message);
 		});
-		String result = (String) template.convertSendAndReceive("", ROUTE, "message", new MessagePostProcessor() {
-
-			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				try {
-					byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
-					return new Message(newBody, message.getMessageProperties());
-				}
-				catch (Exception e) {
-					throw new AmqpException("unexpected failure in test", e);
-				}
+		String result = (String) template.convertSendAndReceive("", ROUTE, "message", message -> {
+			try {
+				byte[] newBody = new String(message.getBody(), "UTF-8").toUpperCase().getBytes("UTF-8");
+				return new Message(newBody, message.getMessageProperties());
+			}
+			catch (Exception e) {
+				throw new AmqpException("unexpected failure in test", e);
 			}
 		});
 		assertEquals("MESSAGE", received.get(1000, TimeUnit.MILLISECONDS));
@@ -987,13 +899,8 @@ public class RabbitTemplateIntegrationTests {
 		this.template.send(ROUTE, message);
 
 		this.template.setCorrelationKey("baz");
-		boolean received = this.template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-			@Override
-			public Message handle(Message message) {
-				return new Message("fuz".getBytes(), new MessageProperties());
-			}
-		});
+		boolean received = this.template.receiveAndReply(
+				message1 -> new Message("fuz".getBytes(), new MessageProperties()));
 		assertTrue(received);
 		message = this.template.receive();
 		assertNotNull(message);
@@ -1016,13 +923,9 @@ public class RabbitTemplateIntegrationTests {
 		this.template.convertAndSend(ROUTE, "test");
 		template.setReceiveTimeout(timeout);
 
-		boolean received = this.template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-			@Override
-			public Message handle(Message message) {
-				message.getMessageProperties().setHeader("foo", "bar");
-				return message;
-			}
+		boolean received = this.template.receiveAndReply((ReceiveAndReplyMessageCallback) message -> {
+			message.getMessageProperties().setHeader("foo", "bar");
+			return message;
 		});
 		assertTrue(received);
 
@@ -1031,13 +934,8 @@ public class RabbitTemplateIntegrationTests {
 
 		this.template.convertAndSend(ROUTE, 1);
 
-		received = this.template.receiveAndReply(ROUTE, new ReceiveAndReplyCallback<Integer, Integer>() {
-
-			@Override
-			public Integer handle(Integer payload) {
-				return payload + 1;
-			}
-		});
+		received = this.template.receiveAndReply(ROUTE,
+				(ReceiveAndReplyCallback<Integer, Integer>) payload -> payload + 1);
 		assertTrue(received);
 
 		Object result = this.template.receiveAndConvert(ROUTE);
@@ -1046,13 +944,8 @@ public class RabbitTemplateIntegrationTests {
 
 		this.template.convertAndSend(ROUTE, 2);
 
-		received = this.template.receiveAndReply(ROUTE, new ReceiveAndReplyCallback<Integer, Integer>() {
-
-			@Override
-			public Integer handle(Integer payload) {
-				return payload * 2;
-			}
-		}, "", ROUTE);
+		received = this.template.receiveAndReply(ROUTE,
+				(ReceiveAndReplyCallback<Integer, Integer>) payload -> payload * 2, "", ROUTE);
 		assertTrue(received);
 
 		result = this.template.receiveAndConvert(ROUTE);
@@ -1062,24 +955,12 @@ public class RabbitTemplateIntegrationTests {
 		if (timeout > 0) {
 			this.template.setReceiveTimeout(1);
 		}
-		received = this.template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-			@Override
-			public Message handle(Message message) {
-				return message;
-			}
-		});
+		received = this.template.receiveAndReply(message -> message);
 		assertFalse(received);
 
 		this.template.convertAndSend(ROUTE, "test");
 		this.template.setReceiveTimeout(timeout);
-		received = this.template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-			@Override
-			public Message handle(Message message) {
-				return null;
-			}
-		});
+		received = this.template.receiveAndReply(message -> null);
 		assertTrue(received);
 
 		this.template.setReceiveTimeout(0);
@@ -1088,24 +969,13 @@ public class RabbitTemplateIntegrationTests {
 
 		this.template.convertAndSend(ROUTE, "TEST");
 		this.template.setReceiveTimeout(timeout);
-		received = this.template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-			@Override
-			public Message handle(Message message) {
-				MessageProperties messageProperties = new MessageProperties();
-				messageProperties.setContentType(message.getMessageProperties().getContentType());
-				messageProperties.setHeader("testReplyTo", new Address("", ROUTE));
-				return new Message(message.getBody(), messageProperties);
-			}
-
-		}, new ReplyToAddressCallback<Message>() {
-
-			@Override
-			public Address getReplyToAddress(Message request, Message reply) {
-				return (Address) reply.getMessageProperties().getHeaders().get("testReplyTo");
-			}
-
-		});
+		received = this.template.receiveAndReply((ReceiveAndReplyMessageCallback) message -> {
+			MessageProperties messageProperties = new MessageProperties();
+			messageProperties.setContentType(message.getMessageProperties().getContentType());
+			messageProperties.setHeader("testReplyTo", new Address("", ROUTE));
+			return new Message(message.getBody(), messageProperties);
+		}, (ReplyToAddressCallback<Message>)
+				(request, reply) -> (Address) reply.getMessageProperties().getHeaders().get("testReplyTo"));
 		assertTrue(received);
 		result = this.template.receiveAndConvert(ROUTE);
 		assertEquals("TEST", result);
@@ -1117,23 +987,15 @@ public class RabbitTemplateIntegrationTests {
 
 		this.template.convertAndSend(ROUTE, "TEST");
 		this.template.setReceiveTimeout(timeout);
-		result = new TransactionTemplate(new TestTransactionManager())
-				.execute(new TransactionCallback<String>() {
-					@Override
-					public String doInTransaction(TransactionStatus status) {
-						final AtomicReference<String> payloadReference = new AtomicReference<String>();
-						boolean received = template.receiveAndReply(new ReceiveAndReplyCallback<String, Void>() {
-
-							@Override
-							public Void handle(String payload) {
-								payloadReference.set(payload);
-								return null;
-							}
-						});
-						assertTrue(received);
-						return payloadReference.get();
-					}
-				});
+		result = new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+			final AtomicReference<String> payloadReference = new AtomicReference<String>();
+			boolean received1 = template.receiveAndReply((ReceiveAndReplyCallback<String, Void>) payload -> {
+				payloadReference.set(payload);
+				return null;
+			});
+			assertTrue(received1);
+			return payloadReference.get();
+		});
 		assertEquals("TEST", result);
 		this.template.setReceiveTimeout(0);
 		assertEquals(null, this.template.receive(ROUTE));
@@ -1141,26 +1003,16 @@ public class RabbitTemplateIntegrationTests {
 		this.template.convertAndSend(ROUTE, "TEST");
 		this.template.setReceiveTimeout(timeout);
 		try {
-			new TransactionTemplate(new TestTransactionManager())
-					.execute(new TransactionCallbackWithoutResult() {
+			new TransactionTemplate(new TestTransactionManager()).execute(new TransactionCallbackWithoutResult() {
 
-						@Override
-						public void doInTransactionWithoutResult(TransactionStatus status) {
-							template.receiveAndReply(new ReceiveAndReplyMessageCallback() {
-
-														 @Override
-														 public Message handle(Message message) {
-															 return message;
-														 }
-													 }, new ReplyToAddressCallback<Message>() {
-
-														 @Override
-														 public Address getReplyToAddress(Message request, Message reply) {
-															 throw new PlannedException();
-														 }
-													 });
-						}
+				@Override
+				public void doInTransactionWithoutResult(TransactionStatus status) {
+					template.receiveAndReply((ReceiveAndReplyMessageCallback) message -> message,
+							(ReplyToAddressCallback<Message>) (request, reply) -> {
+						throw new PlannedException();
 					});
+				}
+			});
 			fail("Expected PlannedException");
 		}
 		catch (Exception e) {
@@ -1196,6 +1048,7 @@ public class RabbitTemplateIntegrationTests {
 		this.template.setRoutingKey(ROUTE);
 		this.template.setReplyAddress(REPLY_QUEUE.getName());
 		this.template.setReplyTimeout(10000);
+		this.template.setReceiveTimeout(10000);
 
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer();
 		container.setConnectionFactory(this.template.getConnectionFactory());
@@ -1212,28 +1065,21 @@ public class RabbitTemplateIntegrationTests {
 		this.template.setCorrelationKey("CorrelationKey");
 
 		for (int i = 0; i < count; i++) {
-			executor.execute(new Runnable() {
-
-				@Override
-				public void run() {
-					Double request = Math.random() * 100;
-					Object reply = template.convertSendAndReceive(request);
-					results.put(request, reply);
-				}
+			executor.execute(() -> {
+				Double request = Math.random() * 100;
+				Object reply = template.convertSendAndReceive(request);
+				results.put(request, reply);
 			});
 		}
 
 		for (int i = 0; i < count; i++) {
-			executor.execute(new Runnable() {
-
-				@Override
-				public void run() {
-					Double request = Math.random() * 100;
-					MessageProperties messageProperties = new MessageProperties();
-					messageProperties.setContentType(MessageProperties.CONTENT_TYPE_SERIALIZED_OBJECT);
-					Message reply = template.sendAndReceive(new Message(SerializationUtils.serialize(request), messageProperties));
-					results.put(request, SerializationUtils.deserialize(reply.getBody()));
-				}
+			executor.execute(() -> {
+				Double request = Math.random() * 100;
+				MessageProperties messageProperties = new MessageProperties();
+				messageProperties.setContentType(MessageProperties.CONTENT_TYPE_SERIALIZED_OBJECT);
+				Message reply = template
+						.sendAndReceive(new Message(SerializationUtils.serialize(request), messageProperties));
+				results.put(request, SerializationUtils.deserialize(reply.getBody()));
 			});
 		}
 
@@ -1241,19 +1087,14 @@ public class RabbitTemplateIntegrationTests {
 
 		long start = System.currentTimeMillis();
 		do {
-			template.receiveAndReply(new ReceiveAndReplyCallback<Double, Double>() {
-
-				@Override
-				public Double handle(Double payload) {
-					receiveCount.incrementAndGet();
-					return payload * 3;
-				}
+			template.receiveAndReply((ReceiveAndReplyCallback<Double, Double>) payload -> {
+				receiveCount.incrementAndGet();
+				return payload * 3;
 			});
 			if (System.currentTimeMillis() > start + 10000) {
 				fail("Something wrong with RabbitMQ");
 			}
 		} while (receiveCount.get() < count * 2);
-
 
 		executor.shutdown();
 		assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
@@ -1274,13 +1115,7 @@ public class RabbitTemplateIntegrationTests {
 
 		template.send(new Message("test".getBytes(), messageProperties));
 
-		template.receiveAndReply(new ReceiveAndReplyCallback<String, String>() {
-
-			@Override
-			public String handle(String payload) {
-				return payload.toUpperCase();
-			}
-		});
+		template.receiveAndReply((ReceiveAndReplyCallback<String, String>) payload -> payload.toUpperCase());
 
 		Message result = this.template.receive(REPLY_QUEUE.getName());
 		assertEquals("TEST", new String(result.getBody()));
@@ -1298,15 +1133,28 @@ public class RabbitTemplateIntegrationTests {
 		sendAndReceiveFastGuts();
 	}
 
-	private void sendAndReceiveFastGuts() {
-		try {
-			this.template.execute(new ChannelCallback<Void>() {
+	@Test
+	public void testSendAndReceiveNeverFast() {
+		this.template.setUseTemporaryReplyQueues(true);
+		sendAndReceiveFastGuts(true);
+	}
 
-				@Override
-				public Void doInRabbit(Channel channel) throws Exception {
-					channel.queueDeclarePassive(Address.AMQ_RABBITMQ_REPLY_TO);
-					return null;
-				}
+	@Test
+	public void testSendAndReceiveNeverFastWitReplyQueue() {
+		this.template.setUseTemporaryReplyQueues(true);
+		this.template.setReplyAddress(Address.AMQ_RABBITMQ_REPLY_TO);
+		sendAndReceiveFastGuts();
+	}
+
+	private void sendAndReceiveFastGuts() {
+		sendAndReceiveFastGuts(false);
+	}
+
+	private void sendAndReceiveFastGuts(boolean tempQueue) {
+		try {
+			this.template.execute(channel -> {
+				channel.queueDeclarePassive(Address.AMQ_RABBITMQ_REPLY_TO);
+				return null;
 			});
 			SimpleMessageListenerContainer container = new SimpleMessageListenerContainer();
 			container.setConnectionFactory(this.template.getConnectionFactory());
@@ -1329,7 +1177,12 @@ public class RabbitTemplateIntegrationTests {
 			Object result = this.template.convertSendAndReceive("foo");
 			container.stop();
 			assertEquals("FOO", result);
-			assertThat(replyToWas.get(), startsWith(Address.AMQ_RABBITMQ_REPLY_TO));
+			if (tempQueue) {
+				assertThat(replyToWas.get(), not(startsWith(Address.AMQ_RABBITMQ_REPLY_TO)));
+			}
+			else {
+				assertThat(replyToWas.get(), startsWith(Address.AMQ_RABBITMQ_REPLY_TO));
+			}
 		}
 		catch (Exception e) {
 			assertThat(e.getCause().getCause().getMessage(), containsString("404"));
@@ -1339,7 +1192,8 @@ public class RabbitTemplateIntegrationTests {
 
 	@Test
 	public void testReplyCompressionWithContainer() {
-		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(this.template.getConnectionFactory());
+		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(
+				this.template.getConnectionFactory());
 		container.setQueueNames(ROUTE);
 		MessageListenerAdapter messageListener = new MessageListenerAdapter(new Object() {
 
@@ -1375,19 +1229,15 @@ public class RabbitTemplateIntegrationTests {
 	public void testDegugLogOnPassiveDeclaration() {
 		CachingConnectionFactory connectionFactory = new CachingConnectionFactory("localhost");
 		Log logger = spy(TestUtils.getPropertyValue(connectionFactory, "logger", Log.class));
-		when(logger.isDebugEnabled()).thenReturn(true);
+		doReturn(true).when(logger).isDebugEnabled();
 		new DirectFieldAccessor(connectionFactory).setPropertyValue("logger", logger);
 		RabbitTemplate template = new RabbitTemplate(connectionFactory);
 		final String queueName = UUID.randomUUID().toString();
 		final String exchangeName = UUID.randomUUID().toString();
 		try {
-			template.execute(new ChannelCallback<Void>() {
-
-				@Override
-				public Void doInRabbit(Channel channel) throws Exception {
-					channel.queueDeclarePassive(queueName);
-					return null;
-				}
+			template.execute(channel -> {
+				channel.queueDeclarePassive(queueName);
+				return null;
 			});
 			fail("Expected exception");
 		}
@@ -1398,13 +1248,9 @@ public class RabbitTemplateIntegrationTests {
 			assertThat(e.getCause().getCause().getMessage(), containsString("404"));
 		}
 		try {
-			template.execute(new ChannelCallback<Void>() {
-
-				@Override
-				public Void doInRabbit(Channel channel) throws Exception {
-					channel.exchangeDeclarePassive(exchangeName);
-					return null;
-				}
+			template.execute(channel -> {
+				channel.exchangeDeclarePassive(exchangeName);
+				return null;
 			});
 			fail("Expected exception");
 		}
@@ -1435,36 +1281,120 @@ public class RabbitTemplateIntegrationTests {
 		when(this.cf1.createConnection()).thenReturn(connection1);
 		Channel channel1 = mock(Channel.class);
 		when(connection1.createChannel(false)).thenReturn(channel1);
-		this.routingTemplate.convertAndSend("exchange", "routingKey", "xyz", new MessagePostProcessor() {
-
-			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				message.getMessageProperties().setHeader("cfKey", "foo");
-				return message;
-			}
+		this.routingTemplate.convertAndSend("exchange", "routingKey", "xyz", message -> {
+			message.getMessageProperties().setHeader("cfKey", "foo");
+			return message;
 		});
-		verify(channel1).basicPublish(anyString(), anyString(), Matchers.anyBoolean(),
-				any(BasicProperties.class), any(byte[].class));
+		verify(channel1).basicPublish(anyString(), anyString(), Matchers.anyBoolean(), any(BasicProperties.class),
+				any(byte[].class));
 
 		Connection connection2 = mock(Connection.class);
 		when(this.cf2.createConnection()).thenReturn(connection2);
 		Channel channel2 = mock(Channel.class);
 		when(connection2.createChannel(false)).thenReturn(channel2);
-		this.routingTemplate.convertAndSend("exchange", "routingKey", "xyz", new MessagePostProcessor() {
+		this.routingTemplate.convertAndSend("exchange", "routingKey", "xyz", message -> {
+			message.getMessageProperties().setHeader("cfKey", "bar");
+			return message;
+		});
+		verify(channel1).basicPublish(anyString(), anyString(), Matchers.anyBoolean(), any(BasicProperties.class),
+				any(byte[].class));
+	}
+
+	@Test
+	public void testSendInGlobalTransactionCommit() throws Exception {
+		testSendInGlobalTransactionGuts(false);
+
+		String result = (String) template.receiveAndConvert(ROUTE);
+		assertEquals("message", result);
+		assertNull(template.receive(ROUTE));
+	}
+
+	@Test
+	public void testSendInGlobalTransactionRollback() throws Exception {
+		testSendInGlobalTransactionGuts(true);
+
+		assertNull(template.receive(ROUTE));
+	}
+
+	@SuppressWarnings({ "serial", "unchecked" })
+	private void testSendInGlobalTransactionGuts(final boolean rollback) throws Exception {
+		template.setChannelTransacted(true);
+		new TransactionTemplate(new TestTransactionManager()).execute(status -> {
+
+			template.convertAndSend(ROUTE, "message");
+
+			if (rollback) {
+				TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronizationAdapter() {
+
+					@Override
+					public void afterCommit() {
+						TransactionSynchronizationUtils
+								.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+					}
+
+				});
+			}
+
+			return null;
+		});
+	}
+
+	@Test
+	public void testSendToMissingExchange() throws Exception {
+		final CountDownLatch shutdownLatch = new CountDownLatch(1);
+		final AtomicReference<ShutdownSignalException> shutdown = new AtomicReference<>();
+		this.connectionFactory.addChannelListener(new ChannelListener() {
 
 			@Override
-			public Message postProcessMessage(Message message) throws AmqpException {
-				message.getMessageProperties().setHeader("cfKey", "bar");
-				return message;
+			public void onCreate(Channel channel, boolean transactional) {
 			}
+
+			@Override
+			public void onShutDown(ShutdownSignalException signal) {
+				shutdown.set(signal);
+				shutdownLatch.countDown();
+			}
+
 		});
-		verify(channel1).basicPublish(anyString(), anyString(), Matchers.anyBoolean(),
-				any(BasicProperties.class), any(byte[].class));
+		final CountDownLatch connLatch = new CountDownLatch(1);
+		this.connectionFactory.addConnectionListener(new ConnectionListener() {
+
+			@Override
+			public void onCreate(Connection connection) {
+			}
+
+			@Override
+			public void onShutDown(ShutdownSignalException signal) {
+				shutdown.set(signal);
+				connLatch.countDown();
+			}
+
+		});
+		this.template.convertAndSend(UUID.randomUUID().toString(), "foo", "bar");
+		assertTrue(shutdownLatch.await(10, TimeUnit.SECONDS));
+		this.template.setChannelTransacted(true);
+		try {
+			this.template.convertAndSend(UUID.randomUUID().toString(), "foo", "bar");
+			fail("expected exception");
+		}
+		catch (AmqpIOException e) {
+			Method shutdownReason = shutdown.get().getReason();
+			assertThat(shutdownReason, instanceOf(AMQP.Channel.Close.class));
+			assertThat(((AMQP.Channel.Close) shutdownReason).getReplyCode(), equalTo(AMQP.NOT_FOUND));
+		}
+		this.connectionFactory.shutdownCompleted(
+				new ShutdownSignalException(true, false, new AMQImpl.Connection.Close(
+						AMQP.CONNECTION_FORCED, "CONNECTION_FORCED", 10, 0), null));
+		assertTrue(connLatch.await(10, TimeUnit.SECONDS));
+		Method shutdownReason = shutdown.get().getReason();
+		assertThat(shutdownReason, instanceOf(AMQP.Connection.Close.class));
+		assertThat(((AMQP.Connection.Close) shutdownReason).getReplyCode(), equalTo(AMQP.CONNECTION_FORCED));
 	}
 
 	@SuppressWarnings("serial")
 	private class PlannedException extends RuntimeException {
-		public PlannedException() {
+
+		PlannedException() {
 			super("Planned");
 		}
 	}

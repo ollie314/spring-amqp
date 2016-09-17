@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.core;
 
 import java.util.Arrays;
@@ -90,7 +91,7 @@ public final class MessageBuilder extends MessageBuilderSupport<Message> {
 		return new MessageBuilder(Arrays.copyOf(body, body.length), message.getMessageProperties());
 	}
 
-	private MessageBuilder(byte[] body) {//NOSONAR
+	private MessageBuilder(byte[] body) { //NOSONAR
 		this.body = body;
 	}
 
@@ -98,7 +99,7 @@ public final class MessageBuilder extends MessageBuilderSupport<Message> {
 		this(message.getBody(), message.getMessageProperties());
 	}
 
-	private MessageBuilder(byte[] body, MessageProperties properties) {//NOSONAR
+	private MessageBuilder(byte[] body, MessageProperties properties) { //NOSONAR
 		this.body = body;
 		this.copyProperties(properties);
 	}

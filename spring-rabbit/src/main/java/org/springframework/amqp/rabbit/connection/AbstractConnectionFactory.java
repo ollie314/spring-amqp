@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.connection;
 
 import java.io.IOException;
@@ -21,6 +25,7 @@ import java.security.GeneralSecurityException;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.logging.Log;
@@ -72,6 +77,25 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 		this.rabbitConnectionFactory = rabbitConnectionFactory;
 	}
 
+	/**
+	 * Return a reference to the underlying Rabbit Connection factory.
+	 * @return the connection factory.
+	 * @since 1.5.6
+	 */
+	public com.rabbitmq.client.ConnectionFactory getRabbitConnectionFactory() {
+		return this.rabbitConnectionFactory;
+	}
+
+	/**
+	 * Return the user name from the unerlying rabbit connection factory.
+	 * @return the user name.
+	 * @since 1.6
+	 */
+	@Override
+	public String getUsername() {
+		return this.rabbitConnectionFactory.getUsername();
+	}
+
 	public void setUsername(String username) {
 		this.rabbitConnectionFactory.setUsername(username);
 	}
@@ -85,6 +109,15 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 	}
 
 	/**
+	 * Set the {@link ThreadFactory} on the underlying rabbit connection factory.
+	 * @param threadFactory the thread factory.
+	 * @since 1.5.3
+	 */
+	public void setConnectionThreadFactory(ThreadFactory threadFactory) {
+		this.rabbitConnectionFactory.setThreadFactory(threadFactory);
+	}
+
+	/**
 	 * @param uri the URI
 	 * @see com.rabbitmq.client.ConnectionFactory#setUri(URI)
 	 * @since 1.5
@@ -94,10 +127,10 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 			this.rabbitConnectionFactory.setUri(uri);
 		}
 		catch (URISyntaxException use) {
-			logger.info(BAD_URI, use);
+			this.logger.info(BAD_URI, use);
 		}
 		catch (GeneralSecurityException gse) {
-			logger.info(BAD_URI, gse);
+			this.logger.info(BAD_URI, gse);
 		}
 	}
 
@@ -111,10 +144,10 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 			this.rabbitConnectionFactory.setUri(uri);
 		}
 		catch (URISyntaxException use) {
-			logger.info(BAD_URI, use);
+			this.logger.info(BAD_URI, use);
 		}
 		catch (GeneralSecurityException gse) {
-			logger.info(BAD_URI, gse);
+			this.logger.info(BAD_URI, gse);
 		}
 	}
 
@@ -129,7 +162,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 
 	@Override
 	public String getVirtualHost() {
-		return rabbitConnectionFactory.getVirtualHost();
+		return this.rabbitConnectionFactory.getVirtualHost();
 	}
 
 	public void setPort(int port) {
@@ -162,7 +195,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 				return;
 			}
 		}
-		logger.info("setAddresses() called with an empty value, will be using the host+port properties for connections");
+		this.logger.info("setAddresses() called with an empty value, will be using the host+port properties for connections");
 		this.addresses = null;
 	}
 
@@ -172,7 +205,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 	 * @return the connection listener
 	 */
 	protected ConnectionListener getConnectionListener() {
-		return connectionListener;
+		return this.connectionListener;
 	}
 
 	/**
@@ -181,7 +214,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 	 * @return the channel listener
 	 */
 	protected ChannelListener getChannelListener() {
-		return channelListener;
+		return this.channelListener;
 	}
 
 	public void setConnectionListeners(List<? extends ConnectionListener> listeners) {
@@ -231,7 +264,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 	}
 
 	protected ExecutorService getExecutorService() {
-		return executorService;
+		return this.executorService;
 	}
 
 	/**
@@ -245,7 +278,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 	}
 
 	public int getCloseTimeout() {
-		return closeTimeout;
+		return this.closeTimeout;
 	}
 
 	@Override
@@ -255,7 +288,7 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 
 	protected final Connection createBareConnection() {
 		try {
-			Connection connection = null;
+			Connection connection;
 			if (this.addresses != null) {
 				connection = new SimpleConnection(this.rabbitConnectionFactory.newConnection(this.executorService, this.addresses),
 									this.closeTimeout);
@@ -264,8 +297,8 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 				connection = new SimpleConnection(this.rabbitConnectionFactory.newConnection(this.executorService),
 									this.closeTimeout);
 			}
-			if (logger.isInfoEnabled()) {
-				logger.info("Created new connection: " + connection);
+			if (this.logger.isInfoEnabled()) {
+				this.logger.info("Created new connection: " + connection);
 			}
 			return connection;
 		}
@@ -282,9 +315,10 @@ public abstract class AbstractConnectionFactory implements ConnectionFactory, Di
 		try {
 			InetAddress localMachine = InetAddress.getLocalHost();
 			temp = localMachine.getHostName();
-			logger.debug("Using hostname [" + temp + "] for hostname.");
-		} catch (UnknownHostException e) {
-			logger.warn("Could not get host name, using 'localhost' as default value", e);
+			this.logger.debug("Using hostname [" + temp + "] for hostname.");
+		}
+		catch (UnknownHostException e) {
+			this.logger.warn("Could not get host name, using 'localhost' as default value", e);
 			temp = "localhost";
 		}
 		return temp;

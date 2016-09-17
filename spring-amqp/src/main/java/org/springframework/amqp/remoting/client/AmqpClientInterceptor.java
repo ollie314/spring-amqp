@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.remoting.client;
@@ -52,10 +55,10 @@ public class AmqpClientInterceptor extends RemoteAccessor implements MethodInter
 		Object rawResult;
 		if (getRoutingKey() == null) {
 			// Use the template's default routing key
-			rawResult = amqpTemplate.convertSendAndReceive(remoteInvocation);
+			rawResult = this.amqpTemplate.convertSendAndReceive(remoteInvocation);
 		}
 		else {
-			rawResult = amqpTemplate.convertSendAndReceive(routingKey, remoteInvocation);
+			rawResult = this.amqpTemplate.convertSendAndReceive(this.routingKey, remoteInvocation);
 		}
 
 		if (rawResult == null) {
@@ -76,7 +79,7 @@ public class AmqpClientInterceptor extends RemoteAccessor implements MethodInter
 	}
 
 	public AmqpTemplate getAmqpTemplate() {
-		return amqpTemplate;
+		return this.amqpTemplate;
 	}
 
 	/**
@@ -92,7 +95,7 @@ public class AmqpClientInterceptor extends RemoteAccessor implements MethodInter
 	}
 
 	public String getRoutingKey() {
-		return routingKey;
+		return this.routingKey;
 	}
 
 	/**
@@ -108,7 +111,7 @@ public class AmqpClientInterceptor extends RemoteAccessor implements MethodInter
 	}
 
 	public RemoteInvocationFactory getRemoteInvocationFactory() {
-		return remoteInvocationFactory;
+		return this.remoteInvocationFactory;
 	}
 
 	/**

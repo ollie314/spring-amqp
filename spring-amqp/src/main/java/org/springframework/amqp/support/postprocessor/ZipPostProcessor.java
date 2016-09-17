@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.support.postprocessor;
 
 import java.io.IOException;
@@ -52,9 +53,9 @@ public class ZipPostProcessor extends AbstractDeflaterPostProcessor {
 		return "zip";
 	}
 
-	private static class SettableLevelZipOutputStream extends ZipOutputStream {
+	private static final class SettableLevelZipOutputStream extends ZipOutputStream {
 
-		public SettableLevelZipOutputStream(OutputStream zipped, int level) {
+		private SettableLevelZipOutputStream(OutputStream zipped, int level) {
 			super(zipped);
 			this.setLevel(level);
 		}

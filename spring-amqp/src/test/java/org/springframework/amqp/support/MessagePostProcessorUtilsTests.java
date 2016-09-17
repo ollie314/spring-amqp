@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.support;
 
 import static org.junit.Assert.assertEquals;
@@ -55,11 +56,14 @@ public class MessagePostProcessorUtilsTests {
 		assertEquals(2, ((POMPP) mpp).getOrder());
 		mpp = iterator.next();
 		assertThat(mpp, Matchers.instanceOf(POMPP.class));
-		assertEquals(6, ((POMPP) mpp).getOrder());mpp = iterator.next();
+		assertEquals(6, ((POMPP) mpp).getOrder());
+		mpp = iterator.next();
 		assertThat(mpp, Matchers.instanceOf(OMPP.class));
-		assertEquals(1, ((OMPP) mpp).getOrder());mpp = iterator.next();
+		assertEquals(1, ((OMPP) mpp).getOrder());
+		mpp = iterator.next();
 		assertThat(mpp, Matchers.instanceOf(OMPP.class));
-		assertEquals(3, ((OMPP) mpp).getOrder());mpp = iterator.next();
+		assertEquals(3, ((OMPP) mpp).getOrder());
+		mpp = iterator.next();
 		assertThat(mpp, Matchers.instanceOf(MPP.class));
 	}
 

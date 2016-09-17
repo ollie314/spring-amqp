@@ -1,14 +1,17 @@
 /*
- * Copyright 2010-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.config;
@@ -32,6 +35,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import com.rabbitmq.client.Address;
+import com.rabbitmq.client.ConnectionFactory;
 
 /**
  *
@@ -62,6 +66,8 @@ public final class ConnectionFactoryParserTests {
 		assertEquals(123, TestUtils.getPropertyValue(connectionFactory, "rabbitConnectionFactory.requestedHeartbeat"));
 		assertEquals(789,  TestUtils.getPropertyValue(connectionFactory, "rabbitConnectionFactory.connectionTimeout"));
 		assertEquals(CachingConnectionFactory.CacheMode.CHANNEL, connectionFactory.getCacheMode());
+		assertEquals(234L, TestUtils.getPropertyValue(connectionFactory, "channelCheckoutTimeout"));
+		assertEquals(456,  TestUtils.getPropertyValue(connectionFactory, "connectionLimit"));
 	}
 
 	@Test
@@ -83,7 +89,8 @@ public final class ConnectionFactoryParserTests {
 		assertEquals(Boolean.FALSE, dfa.getPropertyValue("publisherConfirms"));
 		assertEquals(Boolean.FALSE, dfa.getPropertyValue("publisherReturns"));
 		assertEquals(CachingConnectionFactory.CacheMode.CONNECTION, connectionFactory.getCacheMode());
-		assertEquals(0,  TestUtils.getPropertyValue(connectionFactory, "rabbitConnectionFactory.connectionTimeout"));
+		assertEquals(new ConnectionFactory().getConnectionTimeout(), // verify we didn't overwrite default
+				TestUtils.getPropertyValue(connectionFactory, "rabbitConnectionFactory.connectionTimeout"));
 		assertEquals(10, connectionFactory.getConnectionCacheSize());
 	}
 
@@ -112,6 +119,8 @@ public final class ConnectionFactoryParserTests {
 		assertEquals(-1, addresses[1].getPort());
 		assertEquals("host3", addresses[2].getHost());
 		assertEquals(4567, addresses[2].getPort());
+		assertSame(beanFactory.getBean("tf"), TestUtils.getPropertyValue(connectionFactory,
+				"rabbitConnectionFactory.threadFactory"));
 	}
 
 }

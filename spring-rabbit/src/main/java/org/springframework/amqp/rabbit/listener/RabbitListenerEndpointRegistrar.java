@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -194,13 +194,13 @@ public class RabbitListenerEndpointRegistrar implements BeanFactoryAware, Initia
 	}
 
 
-	private static class AmqpListenerEndpointDescriptor {
+	private static final class AmqpListenerEndpointDescriptor {
 
-		public final RabbitListenerEndpoint endpoint;
+		private final RabbitListenerEndpoint endpoint;
 
-		public final RabbitListenerContainerFactory<?> containerFactory;
+		private final RabbitListenerContainerFactory<?> containerFactory;
 
-		public AmqpListenerEndpointDescriptor(RabbitListenerEndpoint endpoint, RabbitListenerContainerFactory<?> containerFactory) {
+		private AmqpListenerEndpointDescriptor(RabbitListenerEndpoint endpoint, RabbitListenerContainerFactory<?> containerFactory) {
 			this.endpoint = endpoint;
 			this.containerFactory = containerFactory;
 		}

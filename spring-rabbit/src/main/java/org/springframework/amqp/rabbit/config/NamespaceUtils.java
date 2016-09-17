@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.config;
@@ -45,10 +48,10 @@ import org.springframework.util.xml.DomUtils;
  */
 public abstract class NamespaceUtils {
 
-	static final String BASE_PACKAGE = "org.springframework.amqp.core.rabbit.config";
-	static final String REF_ATTRIBUTE = "ref";
-	static final String METHOD_ATTRIBUTE = "method";
-	static final String ORDER = "order";
+	public static final String BASE_PACKAGE = "org.springframework.amqp.core.rabbit.config";
+	public static final String REF_ATTRIBUTE = "ref";
+	public static final String METHOD_ATTRIBUTE = "method";
+	public static final String ORDER = "order";
 
 	/**
 	 * Populates the specified bean definition property with the value of the attribute whose name is provided if that
@@ -140,7 +143,8 @@ public abstract class NamespaceUtils {
 		String value = element.getAttribute(attributeName);
 		if (StringUtils.hasText(value)) {
 			builder.addConstructorArgValue(new TypedStringValue(value));
-		} else {
+		}
+		else {
 			builder.addConstructorArgValue(defaultValue);
 		}
 	}
@@ -265,7 +269,7 @@ public abstract class NamespaceUtils {
 		}
 
 		String ref = element.getAttribute(REF_ATTRIBUTE);
-		Assert.isTrue(!StringUtils.hasText(ref) || innerComponentDefinition == null,//NOSONAR
+		Assert.isTrue(!StringUtils.hasText(ref) || innerComponentDefinition == null, //NOSONAR
 				"Ambiguous definition. Inner bean "
 						+ (innerComponentDefinition == null ? innerComponentDefinition : innerComponentDefinition
 								.getBeanDefinition().getBeanClassName()) + " declaration and \"ref\" " + ref
@@ -290,6 +294,7 @@ public abstract class NamespaceUtils {
 			}
 			builder.addPropertyValue("adminsThatShouldDeclare", adminBeanRefs);
 		}
+		NamespaceUtils.setValueIfAttributeDefined(builder, element, "ignore-declaration-exceptions");
 	}
 
 	public static BeanDefinition createExpressionDefinitionFromValueOrExpression(String valueElementName,
@@ -304,16 +309,16 @@ public abstract class NamespaceUtils {
 		boolean hasAttributeValue = StringUtils.hasText(valueElementValue);
 		boolean hasAttributeExpression = StringUtils.hasText(expressionElementValue);
 
-		if (hasAttributeValue && hasAttributeExpression){
+		if (hasAttributeValue && hasAttributeExpression) {
 			parserContext.getReaderContext().error("Only one of '" + valueElementName + "' or '"
 					+ expressionElementName + "' is allowed", element);
 		}
 
-		if (oneRequired && (!hasAttributeValue && !hasAttributeExpression)){
+		if (oneRequired && (!hasAttributeValue && !hasAttributeExpression)) {
 			parserContext.getReaderContext().error("One of '" + valueElementName + "' or '"
 					+ expressionElementName + "' is required", element);
 		}
-		BeanDefinition expressionDef = null;
+		BeanDefinition expressionDef;
 		if (hasAttributeValue) {
 			expressionDef = new RootBeanDefinition(LiteralExpression.class);
 			expressionDef.getConstructorArgumentValues().addGenericArgumentValue(valueElementValue);
@@ -330,7 +335,7 @@ public abstract class NamespaceUtils {
 
 		String expressionElementValue = element.getAttribute(expressionElementName);
 
-		if (StringUtils.hasText(expressionElementValue)){
+		if (StringUtils.hasText(expressionElementValue)) {
 			BeanDefinitionBuilder expressionDefBuilder =
 					BeanDefinitionBuilder.genericBeanDefinition(ExpressionFactoryBean.class);
 			expressionDefBuilder.addConstructorArgValue(expressionElementValue);

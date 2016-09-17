@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,6 +102,10 @@ public class AmqpMessageHeaderAccessor extends NativeMessageHeaderAccessor {
 		return (MessageDeliveryMode) getHeader(AmqpHeaders.DELIVERY_MODE);
 	}
 
+	public MessageDeliveryMode getReceivedDeliveryMode() {
+		return (MessageDeliveryMode) getHeader(AmqpHeaders.RECEIVED_DELIVERY_MODE);
+	}
+
 	public Long getDeliveryTag() {
 		return (Long) getHeader(AmqpHeaders.DELIVERY_TAG);
 	}
@@ -128,6 +132,10 @@ public class AmqpMessageHeaderAccessor extends NativeMessageHeaderAccessor {
 
 	public String getReceivedRoutingKey() {
 		return (String) getHeader(AmqpHeaders.RECEIVED_ROUTING_KEY);
+	}
+
+	public String getReceivedUserId() {
+		return (String) getHeader(AmqpHeaders.RECEIVED_USER_ID);
 	}
 
 	public Boolean getRedelivered() {

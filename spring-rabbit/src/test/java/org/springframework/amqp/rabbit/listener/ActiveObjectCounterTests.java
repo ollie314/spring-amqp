@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2010 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener;
 
 import static org.junit.Assert.assertEquals;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -27,11 +27,12 @@ import org.junit.Test;
 
 /**
  * @author Dave Syer
+ * @author Gary Russell
  *
  */
 public class ActiveObjectCounterTests {
 
-	private ActiveObjectCounter<Object> counter = new ActiveObjectCounter<Object>();
+	private final ActiveObjectCounter<Object> counter = new ActiveObjectCounter<Object>();
 
 	@Test
 	public void testActiveCount() throws Exception {
@@ -53,13 +54,11 @@ public class ActiveObjectCounterTests {
 		final Object object2 = new Object();
 		counter.add(object1);
 		counter.add(object2);
-		Future<Boolean> future = Executors.newSingleThreadExecutor().submit(new Callable<Boolean>() {
-			public Boolean call() throws Exception {
-				counter.release(object1);
-				counter.release(object2);
-				counter.release(object2);
-				return true;
-			}
+		Future<Boolean> future = Executors.newSingleThreadExecutor().submit(() -> {
+			counter.release(object1);
+			counter.release(object2);
+			counter.release(object2);
+			return true;
 		});
 		assertEquals(true, counter.await(1000L, TimeUnit.MILLISECONDS));
 		assertEquals(true, future.get());

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.support;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -25,11 +27,10 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.SortedMap;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -43,7 +44,6 @@ import org.springframework.util.ReflectionUtils.MethodFilter;
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.AMQP.Basic.RecoverOk;
 import com.rabbitmq.client.AMQP.BasicProperties;
-import com.rabbitmq.client.AMQP.Channel.FlowOk;
 import com.rabbitmq.client.AMQP.Exchange.BindOk;
 import com.rabbitmq.client.AMQP.Exchange.DeclareOk;
 import com.rabbitmq.client.AMQP.Exchange.DeleteOk;
@@ -77,7 +77,7 @@ public class PublisherCallbackChannelImpl
 		implements PublisherCallbackChannel, ConfirmListener, ReturnListener, ShutdownListener {
 
 	private static final String[] METHODS_OF_INTEREST =
-			new String[] {"getFlow", "flow", "flowBlocked", "basicConsume", "basicQos"};
+			new String[] { "consumerCount", "messageCount" };
 
 	private static final MethodFilter METHOD_FILTER = new MethodFilter() {
 
@@ -88,138 +88,93 @@ public class PublisherCallbackChannelImpl
 
 	};
 
+	private static volatile java.lang.reflect.Method consumerCountMethod;
+
+	private static volatile java.lang.reflect.Method messageCountMethod;
+
+	private static volatile boolean conditionalMethodsChecked;
+
 	private final Log logger = LogFactory.getLog(this.getClass());
 
 	private final Channel delegate;
 
-	private final Map<String, Listener> listeners = new ConcurrentHashMap<String, Listener>();
+	private final ConcurrentMap<String, Listener> listeners = new ConcurrentHashMap<String, Listener>();
 
 	private final Map<Listener, SortedMap<Long, PendingConfirm>> pendingConfirms
-		= new ConcurrentHashMap<PublisherCallbackChannel.Listener, SortedMap<Long,PendingConfirm>>();
+		= new ConcurrentHashMap<PublisherCallbackChannel.Listener, SortedMap<Long, PendingConfirm>>();
 
 	private final SortedMap<Long, Listener> listenerForSeq = new ConcurrentSkipListMap<Long, Listener>();
-
-	private final java.lang.reflect.Method getFlowMethod;
-
-	private final java.lang.reflect.Method flowMethod;
-
-	private final java.lang.reflect.Method flowBlockedMethod;
-
-	private final java.lang.reflect.Method basicConsumeFourArgsMethod;
-
-	private final java.lang.reflect.Method basicQosTwoArgsMethod;
 
 	public PublisherCallbackChannelImpl(Channel delegate) {
 		delegate.addShutdownListener(this);
 		this.delegate = delegate;
 
-		// The following reflection is required to maintain compatibility with pre 3.3.x clients.
-		final AtomicReference<java.lang.reflect.Method> getFlowMethod = new AtomicReference<java.lang.reflect.Method>();
-		final AtomicReference<java.lang.reflect.Method> flowMethod = new AtomicReference<java.lang.reflect.Method>();
-		final AtomicReference<java.lang.reflect.Method> flowBlockedMethod = new AtomicReference<java.lang.reflect.Method>();
-		final AtomicReference<java.lang.reflect.Method> basicConsumeFourArgsMethod = new AtomicReference<java.lang.reflect.Method>();
-		final AtomicReference<java.lang.reflect.Method> basicQosTwoArgsMethod = new AtomicReference<java.lang.reflect.Method>();
-		ReflectionUtils.doWithMethods(delegate.getClass(), new MethodCallback(){
+		if (!conditionalMethodsChecked) {
+			// The following reflection is required to maintain compatibility with pre 3.6.x clients.
+			ReflectionUtils.doWithMethods(delegate.getClass(), new MethodCallback() {
 
-			@Override
-			public void doWith(java.lang.reflect.Method method) throws IllegalArgumentException, IllegalAccessException {
-				if ("getFlow".equals(method.getName()) && method.getParameterTypes().length == 0
-						&& FlowOk.class.equals(method.getReturnType())) {
-					getFlowMethod.set(method);
+				@Override
+				public void doWith(java.lang.reflect.Method method)
+						throws IllegalArgumentException, IllegalAccessException {
+					if ("consumerCount".equals(method.getName()) && method.getParameterTypes().length == 1
+							&& String.class.equals(method.getParameterTypes()[0])
+							&& long.class.equals(method.getReturnType())) {
+						consumerCountMethod = method;
+					}
+					else if ("messageCount".equals(method.getName()) && method.getParameterTypes().length == 1
+							&& String.class.equals(method.getParameterTypes()[0])
+							&& long.class.equals(method.getReturnType())) {
+						messageCountMethod = method;
+					}
 				}
-				else if ("flow".equals(method.getName()) && method.getParameterTypes().length == 1
-						&& boolean.class.equals(method.getParameterTypes()[0])
-						&& FlowOk.class.equals(method.getReturnType())) {
-					flowMethod.set(method);
-				}
-				else if ("flowBlocked".equals(method.getName()) && method.getParameterTypes().length == 0
-						&& boolean.class.equals(method.getReturnType())) {
-					flowBlockedMethod.set(method);
-				}
-				else if ("basicConsume".equals(method.getName()) && method.getParameterTypes().length == 4
-						&& String.class.equals(method.getParameterTypes()[0])
-						&& boolean.class.equals(method.getParameterTypes()[1])
-						&& Map.class.equals(method.getParameterTypes()[2])
-						&& Consumer.class.equals(method.getParameterTypes()[3])
-						&& String.class.equals(method.getReturnType())) {
-					basicConsumeFourArgsMethod.set(method);
-				}
-				else if ("basicQos".equals(method.getName()) && method.getParameterTypes().length == 2
-						&& int.class.equals(method.getParameterTypes()[0])
-						&& boolean.class.equals(method.getParameterTypes()[1])
-						&& void.class.equals(method.getReturnType())) {
-					basicQosTwoArgsMethod.set(method);
-				}
-			}
 
-		}, METHOD_FILTER);
-		this.getFlowMethod = getFlowMethod.get();
-		this.flowMethod = flowMethod.get();
-		this.flowBlockedMethod = flowBlockedMethod.get();
-		this.basicConsumeFourArgsMethod = basicConsumeFourArgsMethod.get();
-		this.basicQosTwoArgsMethod = basicQosTwoArgsMethod.get();
+			}, METHOD_FILTER);
+			conditionalMethodsChecked = true;
+		}
 	}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // BEGIN PURE DELEGATE METHODS
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	@Override
 	public void addShutdownListener(ShutdownListener listener) {
 		this.delegate.addShutdownListener(listener);
 	}
 
+	@Override
 	public void removeShutdownListener(ShutdownListener listener) {
 		this.delegate.removeShutdownListener(listener);
 	}
 
+	@Override
 	public ShutdownSignalException getCloseReason() {
 		return this.delegate.getCloseReason();
 	}
 
+	@Override
 	public void notifyListeners() {
 		this.delegate.notifyListeners();
 	}
 
+	@Override
 	public boolean isOpen() {
 		return this.delegate.isOpen();
 	}
 
+	@Override
 	public int getChannelNumber() {
 		return this.delegate.getChannelNumber();
 	}
 
+	@Override
 	public Connection getConnection() {
 		return this.delegate.getConnection();
 	}
 
+	@Override
 	public void close(int closeCode, String closeMessage) throws IOException, TimeoutException {
 		this.delegate.close(closeCode, closeMessage);
-	}
-
-	/**
-	 * @deprecated - removed in the 3.3.x client
-	 * @param active active.
-	 * @return FlowOk.
-	 * @throws IOException IOException.
-	 */
-	@Deprecated
-	public FlowOk flow(boolean active) throws IOException {
-		if (this.flowMethod != null) {
-			return (FlowOk) ReflectionUtils.invokeMethod(this.flowMethod, this.delegate, active);
-		}
-		throw new UnsupportedOperationException("'flow(boolean)' is not supported by the client library");
-	}
-
-	/**
-	 * @deprecated - removed in the 3.3.x client
-	 * @return FlowOk.
-	 */
-	@Deprecated
-	public FlowOk getFlow() {
-		if (this.getFlowMethod != null) {
-			return (FlowOk) ReflectionUtils.invokeMethod(this.getFlowMethod, this.delegate);
-		}
-		throw new UnsupportedOperationException("'getFlow()' is not supported by the client library");
 	}
 
 	/**
@@ -227,45 +182,51 @@ public class PublisherCallbackChannelImpl
 	 * @since 1.3.3
 	 * @deprecated in the 3.5.3 client
 	 */
+	@Override
 	@Deprecated
 	public boolean flowBlocked() {
-		if (this.flowBlockedMethod != null) {
-			return (Boolean) ReflectionUtils.invokeMethod(this.flowBlockedMethod, this.delegate);
-		}
-		throw new UnsupportedOperationException("'flowBlocked()' is not supported by the client library");
+		return this.delegate.flowBlocked();
 	}
 
+	@Override
 	public void abort() throws IOException {
 		this.delegate.abort();
 	}
 
+	@Override
 	public void abort(int closeCode, String closeMessage) throws IOException {
 		this.delegate.abort(closeCode, closeMessage);
 	}
 
+	@Override
 	@SuppressWarnings("deprecation")
 	public void addFlowListener(FlowListener listener) {
 		this.delegate.addFlowListener(listener);
 	}
 
+	@Override
 	@SuppressWarnings("deprecation")
 	public boolean removeFlowListener(FlowListener listener) {
 		return this.delegate.removeFlowListener(listener);
 	}
 
+	@Override
 	@SuppressWarnings("deprecation")
 	public void clearFlowListeners() {
 		this.delegate.clearFlowListeners();
 	}
 
+	@Override
 	public Consumer getDefaultConsumer() {
 		return this.delegate.getDefaultConsumer();
 	}
 
+	@Override
 	public void setDefaultConsumer(Consumer consumer) {
 		this.delegate.setDefaultConsumer(consumer);
 	}
 
+	@Override
 	public void basicQos(int prefetchSize, int prefetchCount, boolean global)
 			throws IOException {
 		this.delegate.basicQos(prefetchSize, prefetchCount, global);
@@ -275,46 +236,49 @@ public class PublisherCallbackChannelImpl
 	 * Added to the 3.3.x client
 	 * @since 1.3.3
 	 */
+	@Override
 	public void basicQos(int prefetchCount, boolean global) throws IOException {
-		if (this.basicQosTwoArgsMethod != null) {
-			ReflectionUtils.invokeMethod(this.basicQosTwoArgsMethod, this.delegate, prefetchCount,
-					global);
-			return;
-		}
-		throw new UnsupportedOperationException("'basicQos(int, boolean)' is not supported by the client library");
+		this.delegate.basicQos(prefetchCount, global);
 	}
 
+	@Override
 	public void basicQos(int prefetchCount) throws IOException {
 		this.delegate.basicQos(prefetchCount);
 	}
 
+	@Override
 	public void basicPublish(String exchange, String routingKey,
 			BasicProperties props, byte[] body) throws IOException {
 		this.delegate.basicPublish(exchange, routingKey, props, body);
 	}
 
+	@Override
 	public void basicPublish(String exchange, String routingKey,
 			boolean mandatory, boolean immediate, BasicProperties props,
 			byte[] body) throws IOException {
 		this.delegate.basicPublish(exchange, routingKey, mandatory, props, body);
 	}
 
+	@Override
 	public void basicPublish(String exchange, String routingKey,
 			boolean mandatory, BasicProperties props, byte[] body)
 			throws IOException {
 		this.delegate.basicPublish(exchange, routingKey, mandatory, props, body);
 	}
 
+	@Override
 	public DeclareOk exchangeDeclare(String exchange, String type)
 			throws IOException {
 		return this.delegate.exchangeDeclare(exchange, type);
 	}
 
+	@Override
 	public DeclareOk exchangeDeclare(String exchange, String type,
 			boolean durable) throws IOException {
 		return this.delegate.exchangeDeclare(exchange, type, durable);
 	}
 
+	@Override
 	public DeclareOk exchangeDeclare(String exchange, String type,
 			boolean durable, boolean autoDelete, Map<String, Object> arguments)
 			throws IOException {
@@ -322,6 +286,7 @@ public class PublisherCallbackChannelImpl
 				arguments);
 	}
 
+	@Override
 	public DeclareOk exchangeDeclare(String exchange, String type,
 			boolean durable, boolean autoDelete, boolean internal,
 			Map<String, Object> arguments) throws IOException {
@@ -329,24 +294,29 @@ public class PublisherCallbackChannelImpl
 				internal, arguments);
 	}
 
+	@Override
 	public DeclareOk exchangeDeclarePassive(String name) throws IOException {
 		return this.delegate.exchangeDeclarePassive(name);
 	}
 
+	@Override
 	public DeleteOk exchangeDelete(String exchange, boolean ifUnused)
 			throws IOException {
 		return this.delegate.exchangeDelete(exchange, ifUnused);
 	}
 
+	@Override
 	public DeleteOk exchangeDelete(String exchange) throws IOException {
 		return this.delegate.exchangeDelete(exchange);
 	}
 
+	@Override
 	public BindOk exchangeBind(String destination, String source,
 			String routingKey) throws IOException {
 		return this.delegate.exchangeBind(destination, source, routingKey);
 	}
 
+	@Override
 	public BindOk exchangeBind(String destination, String source,
 			String routingKey, Map<String, Object> arguments)
 			throws IOException {
@@ -354,11 +324,13 @@ public class PublisherCallbackChannelImpl
 				.exchangeBind(destination, source, routingKey, arguments);
 	}
 
+	@Override
 	public UnbindOk exchangeUnbind(String destination, String source,
 			String routingKey) throws IOException {
 		return this.delegate.exchangeUnbind(destination, source, routingKey);
 	}
 
+	@Override
 	public UnbindOk exchangeUnbind(String destination, String source,
 			String routingKey, Map<String, Object> arguments)
 			throws IOException {
@@ -366,11 +338,13 @@ public class PublisherCallbackChannelImpl
 				arguments);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.DeclareOk queueDeclare()
 			throws IOException {
 		return this.delegate.queueDeclare();
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.DeclareOk queueDeclare(String queue,
 			boolean durable, boolean exclusive, boolean autoDelete,
 			Map<String, Object> arguments) throws IOException {
@@ -378,76 +352,91 @@ public class PublisherCallbackChannelImpl
 				arguments);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.DeclareOk queueDeclarePassive(
 			String queue) throws IOException {
 		return this.delegate.queueDeclarePassive(queue);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.DeleteOk queueDelete(String queue)
 			throws IOException {
 		return this.delegate.queueDelete(queue);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.DeleteOk queueDelete(String queue,
 			boolean ifUnused, boolean ifEmpty) throws IOException {
 		return this.delegate.queueDelete(queue, ifUnused, ifEmpty);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.BindOk queueBind(String queue,
 			String exchange, String routingKey) throws IOException {
 		return this.delegate.queueBind(queue, exchange, routingKey);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.BindOk queueBind(String queue,
 			String exchange, String routingKey, Map<String, Object> arguments)
 			throws IOException {
 		return this.delegate.queueBind(queue, exchange, routingKey, arguments);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.UnbindOk queueUnbind(String queue,
 			String exchange, String routingKey) throws IOException {
 		return this.delegate.queueUnbind(queue, exchange, routingKey);
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Queue.UnbindOk queueUnbind(String queue,
 			String exchange, String routingKey, Map<String, Object> arguments)
 			throws IOException {
 		return this.delegate.queueUnbind(queue, exchange, routingKey, arguments);
 	}
 
+	@Override
 	public PurgeOk queuePurge(String queue) throws IOException {
 		return this.delegate.queuePurge(queue);
 	}
 
+	@Override
 	public GetResponse basicGet(String queue, boolean autoAck)
 			throws IOException {
 		return this.delegate.basicGet(queue, autoAck);
 	}
 
+	@Override
 	public void basicAck(long deliveryTag, boolean multiple) throws IOException {
 		this.delegate.basicAck(deliveryTag, multiple);
 	}
 
+	@Override
 	public void basicNack(long deliveryTag, boolean multiple, boolean requeue)
 			throws IOException {
 		this.delegate.basicNack(deliveryTag, multiple, requeue);
 	}
 
+	@Override
 	public void basicReject(long deliveryTag, boolean requeue)
 			throws IOException {
 		this.delegate.basicReject(deliveryTag, requeue);
 	}
 
+	@Override
 	public String basicConsume(String queue, Consumer callback)
 			throws IOException {
 		return this.delegate.basicConsume(queue, callback);
 	}
 
+	@Override
 	public String basicConsume(String queue, boolean autoAck, Consumer callback)
 			throws IOException {
 		return this.delegate.basicConsume(queue, autoAck, callback);
 	}
 
+	@Override
 	public String basicConsume(String queue, boolean autoAck,
 			String consumerTag, Consumer callback) throws IOException {
 		return this.delegate.basicConsume(queue, autoAck, consumerTag, callback);
@@ -457,16 +446,13 @@ public class PublisherCallbackChannelImpl
 	 * Added to the 3.3.x client
 	 * @since 1.3.3
 	 */
+	@Override
 	public String basicConsume(String queue, boolean autoAck, Map<String, Object> arguments, Consumer callback)
 			throws IOException {
-		if (this.basicConsumeFourArgsMethod != null) {
-			return (String) ReflectionUtils.invokeMethod(this.basicConsumeFourArgsMethod, this.delegate, queue,
-					autoAck, arguments, callback);
-		}
-		throw new UnsupportedOperationException("'basicConsume(String, boolean, Map, Consumer)' " +
-				"is not supported by the client library");
+		return this.delegate.basicConsume(queue, autoAck, arguments, callback);
 	}
 
+	@Override
 	public String basicConsume(String queue, boolean autoAck,
 			String consumerTag, boolean noLocal, boolean exclusive,
 			Map<String, Object> arguments, Consumer callback)
@@ -475,161 +461,187 @@ public class PublisherCallbackChannelImpl
 				exclusive, arguments, callback);
 	}
 
+	@Override
 	public void basicCancel(String consumerTag) throws IOException {
 		this.delegate.basicCancel(consumerTag);
 	}
 
+	@Override
 	public RecoverOk basicRecover() throws IOException {
 		return this.delegate.basicRecover();
 	}
 
+	@Override
 	public RecoverOk basicRecover(boolean requeue) throws IOException {
 		return this.delegate.basicRecover(requeue);
 	}
 
-	@Deprecated
-	public void basicRecoverAsync(boolean requeue) throws IOException {
-		this.delegate.basicRecover(requeue);
-	}
-
+	@Override
 	public SelectOk txSelect() throws IOException {
 		return this.delegate.txSelect();
 	}
 
+	@Override
 	public CommitOk txCommit() throws IOException {
 		return this.delegate.txCommit();
 	}
 
+	@Override
 	public RollbackOk txRollback() throws IOException {
 		return this.delegate.txRollback();
 	}
 
+	@Override
 	public com.rabbitmq.client.AMQP.Confirm.SelectOk confirmSelect()
 			throws IOException {
 		return this.delegate.confirmSelect();
 	}
 
+	@Override
 	public long getNextPublishSeqNo() {
 		return this.delegate.getNextPublishSeqNo();
 	}
 
+	@Override
 	public boolean waitForConfirms() throws InterruptedException {
 		return this.delegate.waitForConfirms();
 	}
 
+	@Override
 	public boolean waitForConfirms(long timeout) throws InterruptedException,
 			TimeoutException {
 		return this.delegate.waitForConfirms(timeout);
 	}
 
+	@Override
 	public void waitForConfirmsOrDie() throws IOException, InterruptedException {
 		this.delegate.waitForConfirmsOrDie();
 	}
 
+	@Override
 	public void waitForConfirmsOrDie(long timeout) throws IOException,
 			InterruptedException, TimeoutException {
 		this.delegate.waitForConfirmsOrDie(timeout);
 	}
 
+	@Override
 	public void asyncRpc(Method method) throws IOException {
 		this.delegate.asyncRpc(method);
 	}
 
+	@Override
 	public Command rpc(Method method) throws IOException {
 		return this.delegate.rpc(method);
 	}
 
+	@Override
 	public void addConfirmListener(ConfirmListener listener) {
 		this.delegate.addConfirmListener(listener);
 	}
 
+	@Override
 	public boolean removeConfirmListener(ConfirmListener listener) {
 		return this.delegate.removeConfirmListener(listener);
 	}
 
+	@Override
 	public void clearConfirmListeners() {
 		this.delegate.clearConfirmListeners();
 	}
 
+	@Override
 	public void addReturnListener(ReturnListener listener) {
 		this.delegate.addReturnListener(listener);
 	}
 
+	@Override
 	public boolean removeReturnListener(ReturnListener listener) {
 		return this.delegate.removeReturnListener(listener);
 	}
 
+	@Override
 	public synchronized void clearReturnListeners() {
 		this.delegate.clearReturnListeners();
 	}
 
-//	@Override
+	@Override
 	public void exchangeBindNoWait(String destination, String source,
 			String routingKey, Map<String, Object> arguments) throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.exchangeBind(destination, source, routingKey, arguments);
 	}
 
-//	@Override
+	@Override
 	public void exchangeDeclareNoWait(String exchange, String type,
 			boolean durable, boolean autoDelete, boolean internal,
 			Map<String, Object> arguments) throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.exchangeDeclareNoWait(exchange, type, durable, autoDelete, internal, arguments);
 	}
 
-//	@Override
+	@Override
 	public void exchangeDeleteNoWait(String exchange, boolean ifUnused) throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.exchangeDeleteNoWait(exchange, ifUnused);
 	}
 
-//	@Override
+	@Override
 	public void exchangeUnbindNoWait(String destination, String source,
 			String routingKey, Map<String, Object> arguments)
 			throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.exchangeUnbindNoWait(destination, source, routingKey, arguments);
 	}
 
-//	@Override
+	@Override
 	public void queueBindNoWait(String queue,
 			String exchange, String routingKey, Map<String, Object> arguments) throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.queueBindNoWait(queue, exchange, routingKey, arguments);
 	}
 
-//	@Override
+	@Override
 	public void queueDeclareNoWait(String queue,
 			boolean durable, boolean exclusive, boolean autoDelete,
 			Map<String, Object> arguments)
 			throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.queueDeclareNoWait(queue, durable, exclusive, autoDelete, arguments);
 	}
 
-//	@Override
+	@Override
 	public void queueDeleteNoWait(String queue,
 			boolean ifUnused, boolean ifEmpty) throws IOException {
-		//TODO: invoke delegate's  ...NoWait when min client is 3.4.0
-		throw new UnsupportedOperationException("To use the ...NoWait methods, use getDelegate().");
+		this.delegate.queueDeleteNoWait(queue, ifUnused, ifEmpty);
 	}
 
+	@Override
+	public long consumerCount(String queue) throws IOException {
+		if (consumerCountMethod != null) {
+			return (Long) ReflectionUtils.invokeMethod(consumerCountMethod, this.delegate, new Object[] { queue });
+		}
+		throw new UnsupportedOperationException("'consumerCount()' requires a 3.6+ client library");
+	}
+
+	@Override
+	public long messageCount(String queue) throws IOException {
+		if (messageCountMethod != null) {
+			return (Long) ReflectionUtils.invokeMethod(messageCountMethod, this.delegate, new Object[] { queue });
+		}
+		throw new UnsupportedOperationException("'messageCountMethod()' requires a 3.6+ client library");
+	}
+
+	@Override
 	public Channel getDelegate() {
-		return delegate;
+		return this.delegate;
 	}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // END PURE DELEGATE METHODS
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	@Override
 	public void close() throws IOException, TimeoutException {
 		try {
 			this.delegate.close();
 		}
 		catch (AlreadyClosedException e) {
-			if (logger.isTraceEnabled()) {
-				logger.trace(this.delegate + " is already closed");
+			if (this.logger.isTraceEnabled()) {
+				this.logger.trace(this.delegate + " is already closed");
 			}
 		}
 		generateNacksForPendingAcks("Channel closed by application");
@@ -638,87 +650,92 @@ public class PublisherCallbackChannelImpl
 	private synchronized void generateNacksForPendingAcks(String cause) {
 		for (Entry<Listener, SortedMap<Long, PendingConfirm>> entry : this.pendingConfirms.entrySet()) {
 			Listener listener = entry.getKey();
-			Iterator<Entry<Long, PendingConfirm>> iterator = entry.getValue().entrySet().iterator();
-			while(iterator.hasNext()) {
-				Entry<Long, PendingConfirm> confirmEntry = iterator.next();
+			for (Entry<Long, PendingConfirm> confirmEntry : entry.getValue().entrySet()) {
 				confirmEntry.getValue().setCause(cause);
-				if (logger.isDebugEnabled()) {
-					logger.debug(this.toString() + " PC:Nack:(close):" + confirmEntry.getKey());
+				if (this.logger.isDebugEnabled()) {
+					this.logger.debug(this.toString() + " PC:Nack:(close):" + confirmEntry.getKey());
 				}
 				processAck(confirmEntry.getKey(), false, false, false);
-				iterator.remove();
 			}
-			listener.removePendingConfirmsReference(this, entry.getValue());
+			listener.revoke(this);
 		}
-		if (logger.isDebugEnabled()) {
-			logger.debug("PendingConfirms cleared");
+		if (this.logger.isDebugEnabled()) {
+			this.logger.debug("PendingConfirms cleared");
 		}
 		this.pendingConfirms.clear();
 		this.listenerForSeq.clear();
 		this.listeners.clear();
 	}
 
+    @Override
+    public synchronized int getPendingConfirmsCount(Listener listener) {
+        SortedMap<Long, PendingConfirm> pendingConfirmsForListener = this.pendingConfirms.get(listener);
+        if (pendingConfirmsForListener == null) {
+            return 0;
+        }
+        else {
+            return pendingConfirmsForListener.entrySet().size();
+        }
+    }
+
 	/**
 	 * Add the listener and return the internal map of pending confirmations for that listener.
-	 * Callers <b>must</b> synchronize on this channel object when modifying the map.
-	 * This method will be changed in a future release to NOT expose the map.
 	 * @param listener the listener.
-	 * @return the internal map of pending confirmations.
-	 * TODO: do not expose the map externally; change the {@code RabbitTemplate#getUnconfirmed(long)}
-	 * functionality to delegate to a method here.
 	 */
-	public synchronized SortedMap<Long, PendingConfirm> addListener(Listener listener) {
+	@Override
+	public void addListener(Listener listener) {
 		Assert.notNull(listener, "Listener cannot be null");
 		if (this.listeners.size() == 0) {
 			this.delegate.addConfirmListener(this);
 			this.delegate.addReturnListener(this);
 		}
-		if (!this.listeners.values().contains(listener)){
-			this.listeners.put(listener.getUUID(), listener);
-			this.pendingConfirms.put(listener, Collections.synchronizedSortedMap(new TreeMap<Long, PendingConfirm>()));
-			if (logger.isDebugEnabled()) {
-				logger.debug("Added listener " + listener);
+		if (this.listeners.putIfAbsent(listener.getUUID(), listener) == null) {
+			this.pendingConfirms.put(listener, new ConcurrentSkipListMap<Long, PendingConfirm>());
+			if (this.logger.isDebugEnabled()) {
+				this.logger.debug("Added listener " + listener);
 			}
 		}
-		return this.pendingConfirms.get(listener);
 	}
 
-	public synchronized boolean removeListener(Listener listener) {
-		Listener mappedListener = this.listeners.remove(listener.getUUID());
-		boolean result = mappedListener != null;
-		if (result && this.listeners.size() == 0) {
-			this.delegate.removeConfirmListener(this);
-			this.delegate.removeReturnListener(this);
+	@Override
+	public synchronized Collection<PendingConfirm> expire(Listener listener, long cutoffTime) {
+		SortedMap<Long, PendingConfirm> pendingConfirmsForListener = this.pendingConfirms.get(listener);
+		if (pendingConfirmsForListener == null) {
+			return Collections.<PendingConfirm>emptyList();
 		}
-		Iterator<Entry<Long, Listener>> iterator = this.listenerForSeq.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Entry<Long, Listener> entry = iterator.next();
-			if (entry.getValue() == listener) {
-				iterator.remove();
+		else {
+			List<PendingConfirm> expired = new ArrayList<PendingConfirm>();
+			Iterator<Entry<Long, PendingConfirm>> iterator = pendingConfirmsForListener.entrySet().iterator();
+			while (iterator.hasNext()) {
+				PendingConfirm pendingConfirm = iterator.next().getValue();
+				if (pendingConfirm.getTimestamp() < cutoffTime) {
+					expired.add(pendingConfirm);
+					iterator.remove();
+				}
+				else {
+					break;
+				}
 			}
+			return expired;
 		}
-		this.pendingConfirms.remove(listener);
-		if (logger.isDebugEnabled()) {
-			logger.debug("Removed listener " + listener);
-		}
-		return result;
 	}
-
 
 //	ConfirmListener
 
+	@Override
 	public void handleAck(long seq, boolean multiple)
 			throws IOException {
-		if (logger.isDebugEnabled()) {
-			logger.debug(this.toString() + " PC:Ack:" + seq + ":" + multiple);
+		if (this.logger.isDebugEnabled()) {
+			this.logger.debug(this.toString() + " PC:Ack:" + seq + ":" + multiple);
 		}
 		this.processAck(seq, true, multiple, true);
 	}
 
+	@Override
 	public void handleNack(long seq, boolean multiple)
 			throws IOException {
-		if (logger.isDebugEnabled()) {
-			logger.debug(this.toString() + " PC:Nack:" + seq + ":" + multiple);
+		if (this.logger.isDebugEnabled()) {
+			this.logger.debug(this.toString() + " PC:Nack:" + seq + ":" + multiple);
 		}
 		this.processAck(seq, false, multiple, true);
 	}
@@ -768,7 +785,9 @@ public class PublisherCallbackChannelImpl
 				}
 			}
 			else {
-				logger.error("No listener for seq:" + seq);
+				if (this.logger.isDebugEnabled()) {
+					this.logger.debug(this.delegate.toString() + " No listener for seq:" + seq);
+				}
 			}
 		}
 	}
@@ -776,17 +795,18 @@ public class PublisherCallbackChannelImpl
 	private void doHandleConfirm(boolean ack, Listener listener, PendingConfirm pendingConfirm) {
 		try {
 			if (listener.isConfirmListener()) {
-				if (logger.isDebugEnabled()) {
-					logger.debug("Sending confirm " + pendingConfirm);
+				if (this.logger.isDebugEnabled()) {
+					this.logger.debug("Sending confirm " + pendingConfirm);
 				}
 				listener.handleConfirm(pendingConfirm, ack);
 			}
 		}
 		catch (Exception e) {
-			logger.error("Exception delivering confirm", e);
+			this.logger.error("Exception delivering confirm", e);
 		}
 	}
 
+	@Override
 	public synchronized void addPendingConfirm(Listener listener, long seq, PendingConfirm pendingConfirm) {
 		SortedMap<Long, PendingConfirm> pendingConfirmsForListener = this.pendingConfirms.get(listener);
 		Assert.notNull(pendingConfirmsForListener,
@@ -797,18 +817,18 @@ public class PublisherCallbackChannelImpl
 
 //  ReturnListener
 
+	@Override
 	public void handleReturn(int replyCode,
 			String replyText,
 			String exchange,
 			String routingKey,
 			AMQP.BasicProperties properties,
-			byte[] body) throws IOException
-	{
+			byte[] body) throws IOException {
 		String uuidObject = properties.getHeaders().get(RETURN_CORRELATION_KEY).toString();
 		Listener listener = this.listeners.get(uuidObject);
 		if (listener == null || !listener.isReturnListener()) {
-			if (logger.isWarnEnabled()) {
-				logger.warn("No Listener for returned message");
+			if (this.logger.isWarnEnabled()) {
+				this.logger.warn("No Listener for returned message");
 			}
 		}
 		else {

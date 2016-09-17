@@ -1,14 +1,17 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.connection;
@@ -86,7 +89,7 @@ public abstract class AbstractRoutingConnectionFactory implements ConnectionFact
 	}
 
 	public boolean isLenientFallback() {
-		return lenientFallback;
+		return this.lenientFallback;
 	}
 
 	@Override
@@ -179,8 +182,13 @@ public abstract class AbstractRoutingConnectionFactory implements ConnectionFact
 	}
 
 	@Override
+	public String getUsername() {
+		return this.determineTargetConnectionFactory().getUsername();
+	}
+
+	@Override
 	public ConnectionFactory getTargetConnectionFactory(Object key) {
-		return targetConnectionFactories.get(key);
+		return this.targetConnectionFactories.get(key);
 	}
 
 	/**
@@ -189,8 +197,8 @@ public abstract class AbstractRoutingConnectionFactory implements ConnectionFact
 	 * @param connectionFactory the {@link ConnectionFactory}
 	 */
 	protected void addTargetConnectionFactory(Object key, ConnectionFactory connectionFactory) {
-		targetConnectionFactories.put(key, connectionFactory);
-		for(ConnectionListener listener : this.connectionListeners) {
+		this.targetConnectionFactories.put(key, connectionFactory);
+		for (ConnectionListener listener : this.connectionListeners) {
 			connectionFactory.addConnectionListener(listener);
 		}
 	}
@@ -201,7 +209,7 @@ public abstract class AbstractRoutingConnectionFactory implements ConnectionFact
 	 * @return the {@link ConnectionFactory} that was removed
 	 */
 	protected ConnectionFactory removeTargetConnectionFactory(Object key) {
-		return targetConnectionFactories.remove(key);
+		return this.targetConnectionFactories.remove(key);
 	}
 
 	/**

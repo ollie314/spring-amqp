@@ -1,37 +1,52 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core;
 
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.logging.Log;
 import org.hamcrest.Matchers;
@@ -41,6 +56,7 @@ import org.junit.rules.ExpectedException;
 import org.mockito.ArgumentCaptor;
 import org.mockito.internal.stubbing.answers.DoesNothing;
 
+import org.springframework.amqp.core.AnonymousQueue;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Binding.DestinationType;
 import org.springframework.amqp.core.BindingBuilder;
@@ -54,11 +70,15 @@ import org.springframework.amqp.rabbit.connection.SingleConnectionFactory;
 import org.springframework.amqp.rabbit.test.BrokerRunning;
 import org.springframework.amqp.utils.test.TestUtils;
 import org.springframework.beans.DirectFieldAccessor;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Scope;
 import org.springframework.context.support.GenericApplicationContext;
 
 import com.rabbitmq.client.Channel;
@@ -173,7 +193,7 @@ public class RabbitAdminTests {
 			rabbitAdmin.setApplicationContext(ctx);
 			rabbitAdmin.afterPropertiesSet();
 			Log logger = spy(TestUtils.getPropertyValue(rabbitAdmin, "logger", Log.class));
-			when(logger.isInfoEnabled()).thenReturn(true);
+			doReturn(true).when(logger).isInfoEnabled();
 			doAnswer(new DoesNothing()).when(logger).info(anyString());
 			new DirectFieldAccessor(rabbitAdmin).setPropertyValue("logger", logger);
 			connectionFactory.createConnection().close(); // force declarations
@@ -226,6 +246,7 @@ public class RabbitAdminTests {
 		admin.deleteExchange("e2");
 		admin.deleteExchange("e3");
 		admin.deleteExchange("e4");
+		assertNull(admin.getQueueProperties(ctx.getBean(Config.class).protypeQueueName));
 		ctx.close();
 	}
 
@@ -248,8 +269,39 @@ public class RabbitAdminTests {
 		cf.destroy();
 	}
 
+	@Test
+	public void testIgnoreDeclarationExeptionsTimeout() throws Exception {
+		com.rabbitmq.client.ConnectionFactory rabbitConnectionFactory = mock(
+				com.rabbitmq.client.ConnectionFactory.class);
+		TimeoutException toBeThrown = new TimeoutException("test");
+		doThrow(toBeThrown).when(rabbitConnectionFactory).newConnection(any(ExecutorService.class));
+		CachingConnectionFactory ccf = new CachingConnectionFactory(rabbitConnectionFactory);
+		RabbitAdmin admin = new RabbitAdmin(ccf);
+		List<DeclarationExceptionEvent> events = new ArrayList<DeclarationExceptionEvent>();
+		admin.setApplicationEventPublisher(new EventPublisher(events));
+		admin.setIgnoreDeclarationExceptions(true);
+		admin.declareQueue(new AnonymousQueue());
+		admin.declareQueue();
+		admin.declareExchange(new DirectExchange("foo"));
+		admin.declareBinding(new Binding("foo", DestinationType.QUEUE, "bar", "baz", null));
+		assertThat(events.size(), equalTo(4));
+		assertThat((RabbitAdmin) events.get(0).getSource(), sameInstance(admin));
+		assertThat(events.get(0).getDeclarable(), instanceOf(AnonymousQueue.class));
+		assertSame(toBeThrown, events.get(0).getThrowable().getCause());
+		assertNull(events.get(1).getDeclarable());
+		assertSame(toBeThrown, events.get(1).getThrowable().getCause());
+		assertThat(events.get(2).getDeclarable(), instanceOf(DirectExchange.class));
+		assertSame(toBeThrown, events.get(2).getThrowable().getCause());
+		assertThat(events.get(3).getDeclarable(), instanceOf(Binding.class));
+		assertSame(toBeThrown, events.get(3).getThrowable().getCause());
+
+		assertSame(events.get(3), admin.getLastDeclarationExceptionEvent());
+	}
+
 	@Configuration
 	public static class Config {
+
+		public String protypeQueueName = UUID.randomUUID().toString();
 
 		@Bean
 		public ConnectionFactory cf() {
@@ -298,6 +350,14 @@ public class RabbitAdminTests {
 		}
 
 		@Bean
+		@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
+		public List<Queue> prototypes() {
+			return Arrays.asList(
+					new Queue(this.protypeQueueName, false, false, true)
+			);
+		}
+
+		@Bean
 		public List<Binding> bs() {
 			return Arrays.asList(
 					new Binding("q2", DestinationType.QUEUE, "e2", "k2", null),
@@ -312,6 +372,26 @@ public class RabbitAdminTests {
 					new Queue("q4", false, false, true),
 					new Binding("q4", DestinationType.QUEUE, "e4", "k4", null)
 			);
+		}
+
+	}
+
+	private static final class EventPublisher implements ApplicationEventPublisher {
+
+		private final List<DeclarationExceptionEvent> events;
+
+		EventPublisher(List<DeclarationExceptionEvent> events) {
+			this.events = events;
+		}
+
+		@Override
+		public void publishEvent(ApplicationEvent event) {
+			events.add((DeclarationExceptionEvent) event);
+		}
+
+		@Override
+		public void publishEvent(Object event) {
+
 		}
 
 	}

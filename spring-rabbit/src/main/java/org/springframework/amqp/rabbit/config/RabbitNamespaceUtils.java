@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import org.springframework.util.StringUtils;
  * @since 1.0.1
  *
  */
-public class RabbitNamespaceUtils {
+public final class RabbitNamespaceUtils {
 
 	private static final String CONNECTION_FACTORY_ATTRIBUTE = "connection-factory";
 
@@ -85,6 +85,8 @@ public class RabbitNamespaceUtils {
 
 	private static final String MISSING_QUEUES_FATAL = "missing-queues-fatal";
 
+	private static final String MISMATCHED_QUEUES_FATAL = "mismatched-queues-fatal";
+
 	private static final String AUTO_DECLARE = "auto-declare";
 
 	private static final String DECLARATION_RETRIES = "declaration-retries";
@@ -94,6 +96,13 @@ public class RabbitNamespaceUtils {
 	private static final String MISSING_QUEUE_RETRY_INTERVAL = "missing-queue-retry-interval";
 
 	private static final String CONSUMER_TAG_STRATEGY = "consumer-tag-strategy";
+
+	private static final String IDLE_EVENT_INTERVAL = "idle-event-interval";
+
+
+	private RabbitNamespaceUtils() {
+		super();
+	}
 
 	public static BeanDefinition parseContainer(Element containerEle, ParserContext parserContext) {
 		RootBeanDefinition containerDef = new RootBeanDefinition(SimpleMessageListenerContainer.class);
@@ -227,6 +236,11 @@ public class RabbitNamespaceUtils {
 			containerDef.getPropertyValues().add("missingQueuesFatal", new TypedStringValue(missingQueuesFatal));
 		}
 
+		String mismatchedQueuesFatal = containerEle.getAttribute(MISMATCHED_QUEUES_FATAL);
+		if (StringUtils.hasText(mismatchedQueuesFatal)) {
+			containerDef.getPropertyValues().add("mismatchedQueuesFatal", new TypedStringValue(mismatchedQueuesFatal));
+		}
+
 		String autoDeclare = containerEle.getAttribute(AUTO_DECLARE);
 		if (StringUtils.hasText(autoDeclare)) {
 			containerDef.getPropertyValues().add("autoDeclare", new TypedStringValue(autoDeclare));
@@ -253,6 +267,11 @@ public class RabbitNamespaceUtils {
 					new RuntimeBeanReference(consumerTagStrategy));
 		}
 
+		String idleEventInterval = containerEle.getAttribute(IDLE_EVENT_INTERVAL);
+		if (StringUtils.hasText(idleEventInterval)) {
+			containerDef.getPropertyValues().add("idleEventInterval", new TypedStringValue(idleEventInterval));
+		}
+
 		return containerDef;
 	}
 
@@ -262,17 +281,21 @@ public class RabbitNamespaceUtils {
 		if (StringUtils.hasText(acknowledge)) {
 			if (ACKNOWLEDGE_AUTO.equals(acknowledge)) {
 				acknowledgeMode = AcknowledgeMode.AUTO;
-			} else if (ACKNOWLEDGE_MANUAL.equals(acknowledge)) {
+			}
+			else if (ACKNOWLEDGE_MANUAL.equals(acknowledge)) {
 				acknowledgeMode = AcknowledgeMode.MANUAL;
-			} else if (ACKNOWLEDGE_NONE.equals(acknowledge)) {
+			}
+			else if (ACKNOWLEDGE_NONE.equals(acknowledge)) {
 				acknowledgeMode = AcknowledgeMode.NONE;
-			} else {
+			}
+			else {
 				parserContext.getReaderContext().error(
 						"Invalid listener container 'acknowledge' setting [" + acknowledge
 								+ "]: only \"auto\", \"manual\", and \"none\" supported.", ele);
 			}
 			return acknowledgeMode;
-		} else {
+		}
+		else {
 			return null;
 		}
 	}

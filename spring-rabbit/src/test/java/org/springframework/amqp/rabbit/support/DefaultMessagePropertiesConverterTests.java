@@ -1,18 +1,24 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.support;
 
+import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
@@ -23,10 +29,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.MessageProperties;
 
 import com.rabbitmq.client.AMQP.BasicProperties;
@@ -36,11 +42,13 @@ import com.rabbitmq.client.impl.LongStringHelper;
 
 /**
  * @author Soeren Unruh
+ * @author Gary Russell
  * @since 1.3
  */
 public class DefaultMessagePropertiesConverterTests {
 
-	private final MessagePropertiesConverter messagePropertiesConverter = new DefaultMessagePropertiesConverter();
+	private final DefaultMessagePropertiesConverter messagePropertiesConverter =
+			new DefaultMessagePropertiesConverter();
 
 	private final Envelope envelope = new Envelope(0, false, null, null);
 
@@ -78,7 +86,6 @@ public class DefaultMessagePropertiesConverterTests {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	public void testToMessagePropertiesLongStringDeepInList() {
 		Map<String, Object> headers = new HashMap<String, Object>();
 		headers.put("list", Arrays.asList(Arrays.asList(longString)));
@@ -110,20 +117,34 @@ public class DefaultMessagePropertiesConverterTests {
 		Map<String, Object> headers = new HashMap<String, Object>();
 		headers.put("longString", longString);
 		headers.put("string1025", LongStringHelper.asLongString(new byte[1025]));
-		headers.put("string1026", LongStringHelper.asLongString(new byte[1026]));
+		byte[] longBytes = new byte[1026];
+		longBytes[0] = 'a';
+		longBytes[1025] = 'z';
+		LongString longString1026 = LongStringHelper.asLongString(longBytes);
+		headers.put("string1026", longString1026);
 		BasicProperties source = new BasicProperties.Builder()
 				.headers(headers)
 				.build();
-		MessageProperties messageProperties = this.messagePropertiesConverter.toMessageProperties(source, envelope,
-				"UTF-8");
-		assertThat(messageProperties.getHeaders().get("longString"), Matchers.instanceOf(String.class));
-		assertThat(messageProperties.getHeaders().get("string1025"), Matchers.instanceOf(DataInputStream.class));
-		assertThat(messageProperties.getHeaders().get("string1026"), Matchers.instanceOf(DataInputStream.class));
-		MessagePropertiesConverter longConverter = new DefaultMessagePropertiesConverter(1025);
+		MessagePropertiesConverter converter = new DefaultMessagePropertiesConverter(1024, true);
+		MessageProperties messageProperties = converter.toMessageProperties(source, envelope, "UTF-8");
+		assertThat(messageProperties.getHeaders().get("longString"), instanceOf(String.class));
+		assertThat(messageProperties.getHeaders().get("string1025"), instanceOf(DataInputStream.class));
+		assertThat(messageProperties.getHeaders().get("string1026"), instanceOf(DataInputStream.class));
+		MessagePropertiesConverter longConverter = new DefaultMessagePropertiesConverter(1025, true);
 		messageProperties = longConverter.toMessageProperties(source, envelope, "UTF-8");
-		assertThat(messageProperties.getHeaders().get("longString"), Matchers.instanceOf(String.class));
-		assertThat(messageProperties.getHeaders().get("string1025"), Matchers.instanceOf(String.class));
-		assertThat(messageProperties.getHeaders().get("string1026"), Matchers.instanceOf(DataInputStream.class));	}
+		assertThat(messageProperties.getHeaders().get("longString"), instanceOf(String.class));
+		assertThat(messageProperties.getHeaders().get("string1025"), instanceOf(String.class));
+		assertThat(messageProperties.getHeaders().get("string1026"), instanceOf(DataInputStream.class));
+
+		longConverter = new DefaultMessagePropertiesConverter(1025);
+		messageProperties = longConverter.toMessageProperties(source, envelope, "UTF-8");
+		assertThat(messageProperties.getHeaders().get("longString"), instanceOf(String.class));
+		assertThat(messageProperties.getHeaders().get("string1025"), instanceOf(String.class));
+		assertThat(messageProperties.getHeaders().get("string1026"), instanceOf(LongString.class));
+
+		BasicProperties basicProperties = longConverter.fromMessageProperties(messageProperties, "UTF-8");
+		assertEquals(longString1026.toString(), basicProperties.getHeaders().get("string1026").toString());
+	}
 
 	@Test
 	public void testFromUnsupportedValue() {
@@ -165,6 +186,52 @@ public class DefaultMessagePropertiesConverterTests {
 		BasicProperties basicProps = messagePropertiesConverter.fromMessageProperties(messageProperties, "UTF-8");
 		assertTrue("Unsupported value nested in Map not converted to String",
 				((Map<String, Object>) basicProps.getHeaders().get("map")).get("unsupported") instanceof String);
+	}
+
+	@Test
+	public void testCorrelationIdAsString() {
+		MessageProperties messageProperties = new MessageProperties();
+		this.messagePropertiesConverter
+				.setCorrelationIdAsString(DefaultMessagePropertiesConverter.CorrelationIdPolicy.BOTH);
+		messageProperties.setCorrelationIdString("foo");
+		messageProperties.setCorrelationId("bar".getBytes()); // foo should win
+		BasicProperties basicProps = this.messagePropertiesConverter.fromMessageProperties(messageProperties, "UTF-8");
+		assertEquals("foo", basicProps.getCorrelationId());
+		messageProperties = this.messagePropertiesConverter.toMessageProperties(basicProps, null, "UTF-8");
+		assertEquals("foo", messageProperties.getCorrelationIdString());
+		assertEquals("foo", new String(messageProperties.getCorrelationId()));
+
+		this.messagePropertiesConverter
+				.setCorrelationIdAsString(DefaultMessagePropertiesConverter.CorrelationIdPolicy.STRING);
+		messageProperties.setCorrelationIdString("foo");
+		messageProperties.setCorrelationId("bar".getBytes()); // foo should win
+		basicProps = this.messagePropertiesConverter.fromMessageProperties(messageProperties, "UTF-8");
+		assertEquals("foo", basicProps.getCorrelationId());
+		messageProperties = this.messagePropertiesConverter.toMessageProperties(basicProps, null, "UTF-8");
+		assertEquals("foo", messageProperties.getCorrelationIdString());
+		assertNull(messageProperties.getCorrelationId());
+
+		this.messagePropertiesConverter
+				.setCorrelationIdAsString(DefaultMessagePropertiesConverter.CorrelationIdPolicy.BYTES);
+		messageProperties.setCorrelationIdString("foo");
+		messageProperties.setCorrelationId("bar".getBytes()); // bar should win
+		basicProps = this.messagePropertiesConverter.fromMessageProperties(messageProperties, "UTF-8");
+		assertEquals("bar", basicProps.getCorrelationId());
+		messageProperties = this.messagePropertiesConverter.toMessageProperties(basicProps, null, "UTF-8");
+		assertNull(messageProperties.getCorrelationIdString());
+		assertEquals("bar", new String(messageProperties.getCorrelationId()));
+	}
+
+	@Test
+	public void testInboundDeliveryMode() {
+		DefaultMessagePropertiesConverter converter = new DefaultMessagePropertiesConverter();
+		MessageProperties props = new MessageProperties();
+		props.setDeliveryMode(MessageDeliveryMode.NON_PERSISTENT);
+		BasicProperties bProps = converter.fromMessageProperties(props, "UTF-8");
+		assertEquals(MessageDeliveryMode.toInt(MessageDeliveryMode.NON_PERSISTENT), bProps.getDeliveryMode().intValue());
+		props = converter.toMessageProperties(bProps, null, "UTF-8");
+		assertEquals(MessageDeliveryMode.NON_PERSISTENT, props.getReceivedDeliveryMode());
+		assertNull(props.getDeliveryMode());
 	}
 
 }

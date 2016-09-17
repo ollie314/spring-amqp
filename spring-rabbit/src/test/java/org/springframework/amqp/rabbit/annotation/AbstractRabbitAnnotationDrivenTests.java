@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 
 import java.util.Collection;
+import java.util.Map;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -31,7 +32,6 @@ import org.junit.rules.ExpectedException;
 
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
-import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.config.RabbitListenerContainerTestFactory;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerEndpoint;
 import org.springframework.amqp.rabbit.listener.AbstractRabbitListenerEndpoint;
@@ -51,6 +51,7 @@ import com.rabbitmq.client.Channel;
 /**
  *
  * @author Stephane Nicoll
+ * @author Gary Russell
  */
 public abstract class AbstractRabbitAnnotationDrivenTests {
 
@@ -81,28 +82,34 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 	@Test
 	public abstract void rabbitHandlerMethodFactoryConfiguration() throws Exception;
 
+	@Test
+	public abstract void rabbitListeners();
+
 	/**
 	 * Test for {@link SampleBean} discovery. If a factory with the default name
 	 * is set, an endpoint will use it automatically
 	 */
-	public void testSampleConfiguration(ApplicationContext context) {
+	public void testSampleConfiguration(ApplicationContext context, int expectedDefaultContainers) {
 		RabbitListenerContainerTestFactory defaultFactory =
 				context.getBean("rabbitListenerContainerFactory", RabbitListenerContainerTestFactory.class);
 		RabbitListenerContainerTestFactory simpleFactory =
 				context.getBean("simpleFactory", RabbitListenerContainerTestFactory.class);
-		assertEquals(1, defaultFactory.getListenerContainers().size());
+		assertEquals(expectedDefaultContainers, defaultFactory.getListenerContainers().size());
 		assertEquals(1, simpleFactory.getListenerContainers().size());
-	}
-
-	@Component
-	static class SampleBean {
-
-		@RabbitListener(queues = "myQueue")
-		public void defaultHandle(String msg) {
+		Map<String, org.springframework.amqp.core.Queue> queues = context
+				.getBeansOfType(org.springframework.amqp.core.Queue.class);
+		for (org.springframework.amqp.core.Queue queue : queues.values()) {
+			assertTrue(queue.isIgnoreDeclarationExceptions());
 		}
-
-		@RabbitListener(containerFactory = "simpleFactory", queues = "myQueue")
-		public void simpleHandle(String msg) {
+		Map<String, org.springframework.amqp.core.Exchange> exchanges = context
+				.getBeansOfType(org.springframework.amqp.core.Exchange.class);
+		for (org.springframework.amqp.core.Exchange exchange : exchanges.values()) {
+			assertTrue(exchange.isIgnoreDeclarationExceptions());
+		}
+		Map<String, org.springframework.amqp.core.Binding> bindings = context
+				.getBeansOfType(org.springframework.amqp.core.Binding.class);
+		for (org.springframework.amqp.core.Binding binding : bindings.values()) {
+			assertTrue(binding.isIgnoreDeclarationExceptions());
 		}
 	}
 
@@ -142,27 +149,6 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 		}
 	}
 
-	@Component
-	static class FullBean {
-
-		@RabbitListener(id = "listener1", containerFactory = "simpleFactory", queues = {"queue1", "queue2"},
-				exclusive = true, priority = "34", admin = "rabbitAdmin")
-		public void fullHandle(String msg) {
-
-		}
-	}
-
-	@Component
-	static class FullConfigurableBean {
-
-		@RabbitListener(id = "${rabbit.listener.id}", containerFactory = "${rabbit.listener.containerFactory}",
-				queues = {"${rabbit.listener.queue}", "queue2"}, exclusive = true,
-				priority = "${rabbit.listener.priority}", admin = "${rabbit.listener.admin}")
-		public void fullHandle(String msg) {
-
-		}
-	}
-
 	/**
 	 * Test for {@link CustomBean} and an manually endpoint registered
 	 * with "myCustomEndpointId". The custom endpoint does not provide
@@ -183,19 +169,13 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 		RabbitListenerEndpointRegistry customRegistry =
 				context.getBean("customRegistry", RabbitListenerEndpointRegistry.class);
 		assertEquals("Wrong number of containers in the registry", 2,
+				customRegistry.getListenerContainerIds().size());
+		assertEquals("Wrong number of containers in the registry", 2,
 				customRegistry.getListenerContainers().size());
 		assertNotNull("Container with custom id on the annotation should be found",
 				customRegistry.getListenerContainer("listenerId"));
 		assertNotNull("Container created with custom id should be found",
 				customRegistry.getListenerContainer("myCustomEndpointId"));
-	}
-
-	@Component
-	static class CustomBean {
-
-		@RabbitListener(id = "listenerId", containerFactory = "customFactory", queues = "myQueue")
-		public void customHandle(String msg) {
-		}
 	}
 
 	/**
@@ -217,13 +197,6 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 		RabbitListenerContainerTestFactory defaultFactory =
 				context.getBean("rabbitListenerContainerFactory", RabbitListenerContainerTestFactory.class);
 		assertEquals(1, defaultFactory.getListenerContainers().size());
-	}
-
-	static class DefaultBean {
-
-		@RabbitListener(queues = "myQueue")
-		public void handleIt(String msg) {
-		}
 	}
 
 	/**
@@ -250,12 +223,34 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 		listener.onMessage(amqpMessage, mock(Channel.class));
 	}
 
-	@Component
-	static class ValidationBean {
+	/**
+	 * Test for {@link RabbitListenersBean} that validates that the
+	 * {@code @RabbitListener} annotations generate one specific container per annotation.
+	 */
+	public void testRabbitListenerRepeatable(ApplicationContext context) {
+		RabbitListenerContainerTestFactory simpleFactory =
+				context.getBean("rabbitListenerContainerFactory", RabbitListenerContainerTestFactory.class);
+		assertEquals(4, simpleFactory.getListenerContainers().size());
 
-		@RabbitListener(containerFactory = "defaultFactory", queues = "myQueue")
-		public void defaultHandle(@Validated String msg) {
-		}
+		MethodRabbitListenerEndpoint first = (MethodRabbitListenerEndpoint)
+				simpleFactory.getListenerContainer("first").getEndpoint();
+		assertEquals("first", first.getId());
+		assertEquals("myQueue", first.getQueueNames().iterator().next());
+
+		MethodRabbitListenerEndpoint second = (MethodRabbitListenerEndpoint)
+				simpleFactory.getListenerContainer("second").getEndpoint();
+		assertEquals("second", second.getId());
+		assertEquals("anotherQueue", second.getQueueNames().iterator().next());
+
+		MethodRabbitListenerEndpoint third = (MethodRabbitListenerEndpoint)
+				simpleFactory.getListenerContainer("third").getEndpoint();
+		assertEquals("third", third.getId());
+		assertEquals("class1", third.getQueueNames().iterator().next());
+
+		MethodRabbitListenerEndpoint fourth = (MethodRabbitListenerEndpoint)
+				simpleFactory.getListenerContainer("fourth").getEndpoint();
+		assertEquals("fourth", fourth.getId());
+		assertEquals("class2", fourth.getQueueNames().iterator().next());
 	}
 
 	private void assertQueues(AbstractRabbitListenerEndpoint actual, String... expectedQueues) {
@@ -266,12 +261,85 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 		assertEquals("Wrong number of queues", expectedQueues.length, actualQueues.size());
 	}
 
-	private void assertQueues(AbstractRabbitListenerEndpoint actual, Queue... expectedQueues) {
-		Collection<Queue> actualQueues = actual.getQueues();
-		for (Queue expectedQueue : expectedQueues) {
-			assertTrue("Queue '" + expectedQueue + "' not found", actualQueues.contains(expectedQueue));
+	@Component
+	static class SampleBean {
+
+		@RabbitListener(queues = "myQueue")
+		public void defaultHandle(String msg) {
 		}
-		assertEquals("Wrong number of queues", expectedQueues.length, actualQueues.size());
+
+		@RabbitListener(containerFactory = "simpleFactory", queues = "myQueue")
+		public void simpleHandle(String msg) {
+		}
+	}
+
+	@Component
+	static class FullBean {
+
+		@RabbitListener(id = "listener1", containerFactory = "simpleFactory", queues = {"queue1", "queue2"},
+				exclusive = true, priority = "34", admin = "rabbitAdmin")
+		public void fullHandle(String msg) {
+
+		}
+	}
+
+	@Component
+	static class FullConfigurableBean {
+
+		@RabbitListener(id = "${rabbit.listener.id}", containerFactory = "${rabbit.listener.containerFactory}",
+				queues = {"${rabbit.listener.queue}", "queue2"}, exclusive = true,
+				priority = "${rabbit.listener.priority}", admin = "${rabbit.listener.admin}")
+		public void fullHandle(String msg) {
+
+		}
+	}
+
+	@Component
+	static class CustomBean {
+
+		@RabbitListener(id = "listenerId", containerFactory = "customFactory", queues = "myQueue")
+		public void customHandle(String msg) {
+		}
+	}
+
+	static class DefaultBean {
+
+		@RabbitListener(queues = "myQueue")
+		public void handleIt(String msg) {
+		}
+	}
+
+	@Component
+	static class ValidationBean {
+
+		@RabbitListener(containerFactory = "defaultFactory", queues = "myQueue")
+		public void defaultHandle(@Validated String msg) {
+		}
+	}
+
+	@Component
+	static class RabbitListenersBean {
+
+		@RabbitListeners({
+				@RabbitListener(id = "first", queues = "myQueue"),
+				@RabbitListener(id = "second", queues = "anotherQueue")
+		})
+		public void repeatableHandle(String msg) {
+		}
+
+	}
+
+	@Component
+	@RabbitListeners({
+		@RabbitListener(id = "third", queues = "class1"),
+		@RabbitListener(id = "fourth", queues = "class2")
+	})
+	static class ClassLevelListenersBean {
+
+		@RabbitHandler
+		public void repeatableHandle(String msg) {
+		}
+
 	}
 
 	static class TestValidator implements Validator {
@@ -289,4 +357,5 @@ public abstract class AbstractRabbitAnnotationDrivenTests {
 			}
 		}
 	}
+
 }

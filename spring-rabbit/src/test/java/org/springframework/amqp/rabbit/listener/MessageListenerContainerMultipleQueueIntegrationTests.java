@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.listener;
@@ -23,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.log4j.Level;
+import org.apache.logging.log4j.Level;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
@@ -69,42 +72,22 @@ public class MessageListenerContainerMultipleQueueIntegrationTests {
 
 	@Test
 	public void testMultipleQueues() {
-		doTest(1, new ContainerConfigurer() {
-			@Override
-			public void configure(SimpleMessageListenerContainer container) {
-				container.setQueues(queue1, queue2);
-			}
-		});
+		doTest(1, container -> container.setQueues(queue1, queue2));
 	}
 
 	@Test
 	public void testMultipleQueueNames() {
-		doTest(1, new ContainerConfigurer() {
-			@Override
-			public void configure(SimpleMessageListenerContainer container) {
-				container.setQueueNames(queue1.getName(), queue2.getName());
-			}
-		});
+		doTest(1, container -> container.setQueueNames(queue1.getName(), queue2.getName()));
 	}
 
 	@Test
 	public void testMultipleQueuesWithConcurrentConsumers() {
-		doTest(3, new ContainerConfigurer() {
-			@Override
-			public void configure(SimpleMessageListenerContainer container) {
-				container.setQueues(queue1, queue2);
-			}
-		});
+		doTest(3, container -> container.setQueues(queue1, queue2));
 	}
 
 	@Test
 	public void testMultipleQueueNamesWithConcurrentConsumers() {
-		doTest(3, new ContainerConfigurer() {
-			@Override
-			public void configure(SimpleMessageListenerContainer container) {
-				container.setQueueNames(queue1.getName(), queue2.getName());
-			}
-		});
+		doTest(3, container -> container.setQueueNames(queue1.getName(), queue2.getName()));
 	}
 
 
@@ -154,7 +137,7 @@ public class MessageListenerContainerMultipleQueueIntegrationTests {
 		connectionFactory.destroy();
 	}
 
-
+	@FunctionalInterface
 	private interface ContainerConfigurer {
 		void configure(SimpleMessageListenerContainer container);
 	}
@@ -167,7 +150,7 @@ public class MessageListenerContainerMultipleQueueIntegrationTests {
 
 		private final CountDownLatch latch;
 
-		public PojoListener(CountDownLatch latch) {
+		PojoListener(CountDownLatch latch) {
 			this.latch = latch;
 		}
 

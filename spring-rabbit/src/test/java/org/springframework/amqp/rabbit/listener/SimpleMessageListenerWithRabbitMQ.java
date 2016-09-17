@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener;
 
 import static org.junit.Assert.assertNotNull;
@@ -32,9 +36,14 @@ import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.amqp.support.converter.SimpleMessageConverter;
 import org.springframework.beans.DirectFieldAccessor;
 
-public class SimpleMessageListenerWithRabbitMQ {
+public final class SimpleMessageListenerWithRabbitMQ {
 
 	private static Log logger = LogFactory.getLog(SimpleMessageListenerWithRabbitMQ.class);
+
+
+	private SimpleMessageListenerWithRabbitMQ() {
+		super();
+	}
 
 
 	public static void main(String[] args) throws InterruptedException {
@@ -55,7 +64,7 @@ public class SimpleMessageListenerWithRabbitMQ {
 		container.setTxSize(500);
 		container.setAcknowledgeMode(AcknowledgeMode.AUTO);
 		container.setConcurrentConsumers(20);
-		container.setMessageListener(new MessageListenerAdapter(new SimpleAdapter(),messageConverter));
+		container.setMessageListener(new MessageListenerAdapter(new SimpleAdapter(), messageConverter));
 		container.start();
 
 		RabbitTemplate template = new RabbitTemplate(connectionFactory);
@@ -64,8 +73,8 @@ public class SimpleMessageListenerWithRabbitMQ {
 
 		Thread.sleep(10000);
 		int n = 0;
-		while(true){
-			for(int i=1; i<=200;i++){
+		while (true) {
+			for (int i = 1; i <= 200; i++) {
 
 				template.send("foo", "", new Message("foo # ID: id".replace("#", String.valueOf(i)).replace("id", java.util.UUID.randomUUID().toString()).getBytes(), messageProperties));
 
@@ -101,7 +110,7 @@ public class SimpleMessageListenerWithRabbitMQ {
 
 
 
-	private static class SimpleAdapter{
+	private static class SimpleAdapter {
 
 		@SuppressWarnings("unused")
 		public void handleMessage(String input) {

@@ -1,11 +1,11 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -104,7 +104,10 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 		this.password = password;
 		this.useSSL = useSSL;
 		this.sslPropertiesLocation = sslPropertiesLocation;
-		this.keyStore = this.trustStore = this.keyStorePassPhrase = this.trustStorePassPhrase = null;
+		this.keyStore = null;
+		this.trustStore = null;
+		this.keyStorePassPhrase = null;
+		this.trustStorePassPhrase = null;
 	}
 
 	/**
@@ -169,7 +172,10 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 		this.password = password;
 		this.useSSL = useSSL;
 		this.sslPropertiesLocation = sslPropertiesLocation;
-		this.keyStore = this.trustStore = this.keyStorePassPhrase = this.trustStorePassPhrase = null;
+		this.keyStore = null;
+		this.trustStore = null;
+		this.keyStorePassPhrase = null;
+		this.trustStorePassPhrase = null;
 	}
 
 	/**
@@ -231,6 +237,11 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 	}
 
 	@Override
+	public String getUsername() {
+		return this.username;
+	}
+
+	@Override
 	public void addConnectionListener(ConnectionListener listener) {
 		this.defaultConnectionFactory.addConnectionListener(listener);
 	}
@@ -275,8 +286,8 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 						if (uri != null) {
 							return nodeConnectionFactory(queue, node, uri);
 						}
-						if (logger.isDebugEnabled()) {
-							logger.debug("No match for node: " + node);
+						if (this.logger.isDebugEnabled()) {
+							this.logger.debug("No match for node: " + node);
 						}
 					}
 				}
@@ -285,11 +296,11 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 				}
 			}
 			catch (Exception e) {
-				logger.warn("Failed to determine queue location for: " + queue + " at: " +
+				this.logger.warn("Failed to determine queue location for: " + queue + " at: " +
 						adminUri + ": " + e.getMessage());
 			}
 		}
-		logger.warn("Failed to determine queue location for: " + queue + ", using default connection factory");
+		this.logger.warn("Failed to determine queue location for: " + queue + ", using default connection factory");
 		return null;
 	}
 
@@ -309,14 +320,14 @@ public class LocalizedQueueConnectionFactory implements ConnectionFactory, Routi
 
 	private synchronized ConnectionFactory nodeConnectionFactory(String queue, String node, String address)
 			throws Exception {
-		if (logger.isInfoEnabled()) {
-			logger.info("Queue: " + queue + " is on node: " + node + " at: " + address);
+		if (this.logger.isInfoEnabled()) {
+			this.logger.info("Queue: " + queue + " is on node: " + node + " at: " + address);
 		}
 		ConnectionFactory cf = this.nodeFactories.get(node);
 		if (cf == null) {
 			cf = createConnectionFactory(address, node);
-			if (logger.isInfoEnabled()) {
-				logger.info("Created new connection factory: " + cf);
+			if (this.logger.isInfoEnabled()) {
+				this.logger.info("Created new connection factory: " + cf);
 			}
 			this.nodeFactories.put(node, cf);
 		}

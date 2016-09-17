@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core.support;
 
 import java.nio.ByteBuffer;
@@ -86,8 +87,8 @@ public class SimpleBatchingStrategy implements BatchingStrategy {
 			this.routingKey = routingKey;
 		}
 		this.currentSize += bufferUse;
-		messages.add(message);
-		if (batch == null && (messages.size() >= this.batchSize
+		this.messages.add(message);
+		if (batch == null && (this.messages.size() >= this.batchSize
 								|| this.currentSize >= this.bufferLimit)) {
 			batch = doReleaseBatch();
 		}

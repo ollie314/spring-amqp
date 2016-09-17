@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.core;
 
 /**
@@ -22,7 +23,7 @@ package org.springframework.amqp.core;
  * @since 1.3
  *
  */
-public class MessagePropertiesBuilder extends MessageBuilderSupport<MessageProperties> {
+public final class MessagePropertiesBuilder extends MessageBuilderSupport<MessageProperties> {
 
 	/**
 	 * Returns a builder with an initial set of properties.

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,8 @@ public final class ExchangeParserTests {
 		assertFalse(exchange.isAutoDelete());
 		assertFalse(exchange.shouldDeclare());
 		assertEquals(2, exchange.getDeclaringAdmins().size());
-		Binding binding = beanFactory.getBean("org.springframework.amqp.rabbit.config.BindingFactoryBean#0", Binding.class);
+		Binding binding =
+				beanFactory.getBean("org.springframework.amqp.rabbit.config.BindingFactoryBean#0", Binding.class);
 		assertFalse(binding.shouldDeclare());
 		assertEquals(2, binding.getDeclaringAdmins().size());
 
@@ -93,6 +94,8 @@ public final class ExchangeParserTests {
 		assertTrue(exchange.isDurable());
 		assertFalse(exchange.isAutoDelete());
 		assertTrue(exchange.shouldDeclare());
+		assertTrue(exchange.isDelayed());
+		assertTrue(exchange.isInternal());
 		assertEquals(1, exchange.getDeclaringAdmins().size());
 
 	}
@@ -105,6 +108,7 @@ public final class ExchangeParserTests {
 		assertTrue(exchange.isDurable());
 		assertFalse(exchange.isAutoDelete());
 		assertTrue(exchange.shouldDeclare());
+		assertFalse(exchange.isDelayed());
 		assertEquals(1, exchange.getDeclaringAdmins().size());
 
 	}

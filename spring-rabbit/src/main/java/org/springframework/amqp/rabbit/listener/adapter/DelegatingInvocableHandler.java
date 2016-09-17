@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener.adapter;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.beans.factory.config.BeanExpressionContext;
+import org.springframework.beans.factory.config.BeanExpressionResolver;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.expression.Expression;
+import org.springframework.expression.ParserContext;
+import org.springframework.expression.common.TemplateParserContext;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.handler.invocation.InvocableHandlerMethod;
+import org.springframework.util.Assert;
 
 
 /**
@@ -40,27 +54,44 @@ import org.springframework.messaging.handler.invocation.InvocableHandlerMethod;
  */
 public class DelegatingInvocableHandler {
 
+	private static final SpelExpressionParser PARSER = new SpelExpressionParser();
+
+	private static final ParserContext PARSER_CONTEXT = new TemplateParserContext("!{", "}");
+
 	private final List<InvocableHandlerMethod> handlers;
 
-	private final ConcurrentMap<Class<?>, InvocableHandlerMethod> cachedHandlers = new ConcurrentHashMap<Class<?>, InvocableHandlerMethod>();
+	private final ConcurrentMap<Class<?>, InvocableHandlerMethod> cachedHandlers =
+			new ConcurrentHashMap<Class<?>, InvocableHandlerMethod>();
+
+	private final Map<InvocableHandlerMethod, Expression> handlerSendTo =
+			new HashMap<InvocableHandlerMethod, Expression>();
 
 	private final Object bean;
+
+	private final BeanExpressionResolver resolver;
+
+	private final BeanExpressionContext beanExpressionContext;
 
 	/**
 	 * Construct an instance with the supplied handlers for the bean.
 	 * @param handlers the handlers.
 	 * @param bean the bean.
+	 * @param beanExpressionResolver the resolver.
+	 * @param beanExpressionContext the context.
 	 */
-	public DelegatingInvocableHandler(List<InvocableHandlerMethod> handlers, Object bean) {
+	public DelegatingInvocableHandler(List<InvocableHandlerMethod> handlers, Object bean,
+			BeanExpressionResolver beanExpressionResolver, BeanExpressionContext beanExpressionContext) {
 		this.handlers = new ArrayList<InvocableHandlerMethod>(handlers);
 		this.bean = bean;
+		this.resolver = beanExpressionResolver;
+		this.beanExpressionContext = beanExpressionContext;
 	}
 
 	/**
 	 * @return the bean
 	 */
 	public Object getBean() {
-		return bean;
+		return this.bean;
 	}
 
 	/**
@@ -74,7 +105,14 @@ public class DelegatingInvocableHandler {
 	public Object invoke(Message<?> message, Object... providedArgs) throws Exception {
 		Class<? extends Object> payloadClass = message.getPayload().getClass();
 		InvocableHandlerMethod handler = getHandlerForPayload(payloadClass);
-		return handler.invoke(message, providedArgs);
+		Object result = handler.invoke(message, providedArgs);
+		if (message.getHeaders().get(AmqpHeaders.REPLY_TO) == null) {
+			Expression replyTo = this.handlerSendTo.get(handler);
+			if (replyTo != null) {
+				result = new MessagingMessageListenerAdapter.ResultHolder(result, replyTo);
+			}
+		}
+		return result;
 	}
 
 	/**
@@ -88,9 +126,50 @@ public class DelegatingInvocableHandler {
 			if (handler == null) {
 				throw new AmqpException("No method found for " + payloadClass);
 			}
-			this.cachedHandlers.putIfAbsent(payloadClass, handler);//NOSONAR
+			this.cachedHandlers.putIfAbsent(payloadClass, handler); //NOSONAR
+			setupReplyTo(handler);
 		}
 		return handler;
+	}
+
+	private void setupReplyTo(InvocableHandlerMethod handler) {
+		String replyTo = null;
+		Method method = handler.getMethod();
+		if (method != null) {
+			SendTo ann = AnnotationUtils.getAnnotation(method, SendTo.class);
+			replyTo = extractSendTo(method.toString(), ann);
+		}
+		if (replyTo == null) {
+			SendTo ann = AnnotationUtils.getAnnotation(this.bean.getClass(), SendTo.class);
+			replyTo = extractSendTo(this.getBean().getClass().getSimpleName(), ann);
+		}
+		if (replyTo != null) {
+			this.handlerSendTo.put(handler, PARSER.parseExpression(replyTo, PARSER_CONTEXT));
+		}
+	}
+
+	private String extractSendTo(String element, SendTo ann) {
+		String replyTo = null;
+		if (ann != null) {
+			String[] destinations = ann.value();
+			if (destinations.length > 1) {
+				throw new IllegalStateException("Invalid @" + SendTo.class.getSimpleName() + " annotation on '"
+						+ element + "' one destination must be set (got " + Arrays.toString(destinations) + ")");
+			}
+			replyTo = destinations.length == 1 ? resolve(destinations[0]) : null;
+		}
+		return replyTo;
+	}
+
+	private String resolve(String value) {
+		if (this.resolver != null) {
+			Object newValue = this.resolver.evaluate(value, this.beanExpressionContext);
+			Assert.isInstanceOf(String.class, newValue, "Invalid @SendTo expression");
+			return (String) newValue;
+		}
+		else {
+			return value;
+		}
 	}
 
 	protected InvocableHandlerMethod findHandlerForPayload(Class<? extends Object> payloadClass) {
@@ -113,7 +192,8 @@ public class DelegatingInvocableHandler {
 		// Single param; no annotation or @Payload
 		if (parameterAnnotations.length == 1) {
 			MethodParameter methodParameter = new MethodParameter(method, 0);
-			if (methodParameter.getParameterAnnotations().length == 0 || methodParameter.hasParameterAnnotation(Payload.class)) {
+			if (methodParameter.getParameterAnnotations().length == 0
+					|| methodParameter.hasParameterAnnotation(Payload.class)) {
 				if (methodParameter.getParameterType().isAssignableFrom(payloadClass)) {
 					return true;
 				}
@@ -122,7 +202,8 @@ public class DelegatingInvocableHandler {
 		boolean foundCandidate = false;
 		for (int i = 0; i < parameterAnnotations.length; i++) {
 			MethodParameter methodParameter = new MethodParameter(method, i);
-			if (methodParameter.getParameterAnnotations().length == 0 || methodParameter.hasParameterAnnotation(Payload.class)) {
+			if (methodParameter.getParameterAnnotations().length == 0
+					|| methodParameter.hasParameterAnnotation(Payload.class)) {
 				if (methodParameter.getParameterType().isAssignableFrom(payloadClass)) {
 					if (foundCandidate) {
 						throw new AmqpException("Ambiguous payload parameter for " + method.toGenericString());
@@ -141,7 +222,7 @@ public class DelegatingInvocableHandler {
 	 */
 	public String getMethodNameFor(Object payload) {
 		InvocableHandlerMethod handlerForPayload = getHandlerForPayload(payload.getClass());
-		return handlerForPayload == null ? "no match" : handlerForPayload.getMethod().toGenericString();//NOSONAR
+		return handlerForPayload == null ? "no match" : handlerForPayload.getMethod().toGenericString(); //NOSONAR
 	}
 
 }

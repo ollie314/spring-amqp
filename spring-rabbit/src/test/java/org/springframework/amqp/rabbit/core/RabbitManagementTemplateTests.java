@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core;
 
 import static org.hamcrest.Matchers.anyOf;
@@ -37,6 +38,7 @@ import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Exchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.test.BrokerRunning;
 
@@ -164,15 +166,20 @@ public class RabbitManagementTemplateTests {
 	public void testSpecificQueue() throws Exception {
 		RabbitAdmin admin = new RabbitAdmin(connectionFactory);
 		Map<String, Object> args = Collections.<String, Object>singletonMap("foo", "bar");
-		Queue queue1 = new Queue(UUID.randomUUID().toString(), false, false, true, args);
+		Queue queue1 = QueueBuilder.nonDurable(UUID.randomUUID().toString())
+				.autoDelete()
+				.withArguments(args)
+				.build();
 		admin.declareQueue(queue1);
-		Queue queue2 = new Queue(UUID.randomUUID().toString(), true, false, false, args);
+		Queue queue2 = QueueBuilder.durable(UUID.randomUUID().toString())
+				.withArguments(args)
+				.build();
 		admin.declareQueue(queue2);
 		Channel channel = this.connectionFactory.createConnection().createChannel(false);
 		String consumer = channel.basicConsume(queue1.getName(), false, "", false, true, null, new DefaultConsumer(channel));
 		QueueInfo qi = this.template.getClient().getQueue("/", queue1.getName());
 		int n = 0;
-		while (n++ < 100 && qi.getExclusiveConsumerTag().equals("")) {
+		while (n++ < 100 && (qi.getExclusiveConsumerTag() == null || qi.getExclusiveConsumerTag().equals(""))) {
 			Thread.sleep(100);
 			qi = this.template.getClient().getQueue("/", queue1.getName());
 		}

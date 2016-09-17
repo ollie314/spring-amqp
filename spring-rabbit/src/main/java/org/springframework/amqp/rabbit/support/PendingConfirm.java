@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.support;
 
 /**
@@ -47,14 +48,14 @@ public class PendingConfirm {
 	 * @return The correlation data.
 	 */
 	public CorrelationData getCorrelationData() {
-		return correlationData;
+		return this.correlationData;
 	}
 
 	/**
 	 * @return The time the message was sent.
 	 */
 	public long getTimestamp() {
-		return timestamp;
+		return this.timestamp;
 	}
 
 	/**
@@ -71,12 +72,12 @@ public class PendingConfirm {
 	 * @since 1.4
 	 */
 	public String getCause() {
-		return cause;
+		return this.cause;
 	}
 
 	@Override
 	public String toString() {
-		return "PendingConfirm [correlationData=" + correlationData + (this.cause == null ? "" : " cause=" + cause) + "]";
+		return "PendingConfirm [correlationData=" + this.correlationData + (this.cause == null ? "" : " cause=" + this.cause) + "]";
 	}
 
 }

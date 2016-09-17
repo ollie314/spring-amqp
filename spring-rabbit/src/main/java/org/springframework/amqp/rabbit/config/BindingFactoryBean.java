@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2013 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.config;
 
 import java.util.Map;
@@ -29,11 +33,19 @@ import org.springframework.beans.factory.FactoryBean;
 public class BindingFactoryBean implements FactoryBean<Binding> {
 
 	private Map<String, Object> arguments;
+
 	private String routingKey = "";
+
 	private String exchange;
+
 	private Queue destinationQueue;
+
 	private Exchange destinationExchange;
+
 	private Boolean shouldDeclare;
+
+	private Boolean ignoreDeclarationExceptions;
+
 	private AmqpAdmin[] adminsThatShouldDeclare;
 
 	public void setArguments(Map<String, Object> arguments) {
@@ -60,6 +72,10 @@ public class BindingFactoryBean implements FactoryBean<Binding> {
 		this.shouldDeclare = shouldDeclare;
 	}
 
+	public void setIgnoreDeclarationExceptions(Boolean ignoreDeclarationExceptions) {
+		this.ignoreDeclarationExceptions = ignoreDeclarationExceptions;
+	}
+
 	public void setAdminsThatShouldDeclare(AmqpAdmin... adminsThatShouldDeclare) {
 		this.adminsThatShouldDeclare = adminsThatShouldDeclare;
 	}
@@ -67,16 +83,20 @@ public class BindingFactoryBean implements FactoryBean<Binding> {
 	public Binding getObject() throws Exception {
 		String destination;
 		DestinationType destinationType;
-		if (destinationQueue != null) {
-			destination = destinationQueue.getName();
+		if (this.destinationQueue != null) {
+			destination = this.destinationQueue.getName();
 			destinationType = DestinationType.QUEUE;
-		} else {
-			destination = destinationExchange.getName();
+		}
+		else {
+			destination = this.destinationExchange.getName();
 			destinationType = DestinationType.EXCHANGE;
 		}
-		Binding binding = new Binding(destination, destinationType, exchange, routingKey, arguments);
+		Binding binding = new Binding(destination, destinationType, this.exchange, this.routingKey, this.arguments);
 		if (this.shouldDeclare != null) {
 			binding.setShouldDeclare(this.shouldDeclare);
+		}
+		if (this.ignoreDeclarationExceptions != null) {
+			binding.setIgnoreDeclarationExceptions(this.ignoreDeclarationExceptions);
 		}
 		if (this.adminsThatShouldDeclare != null) {
 			binding.setAdminsThatShouldDeclare((Object[]) this.adminsThatShouldDeclare);

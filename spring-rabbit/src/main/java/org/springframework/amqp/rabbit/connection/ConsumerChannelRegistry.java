@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.connection;
 
 import org.apache.commons.logging.Log;
@@ -31,11 +32,15 @@ import com.rabbitmq.client.Channel;
  * @since 1.2
  *
  */
-public class ConsumerChannelRegistry {
+public final class ConsumerChannelRegistry {
 
 	private static final Log logger = LogFactory.getLog(ConsumerChannelRegistry.class);
 
 	private static final ThreadLocal<ChannelHolder> consumerChannel = new ThreadLocal<ChannelHolder>();
+
+	private ConsumerChannelRegistry() {
+		super();
+	}
 
 	/**
 	 * If a listener container is configured to use a RabbitTransactionManager, the
@@ -98,7 +103,7 @@ public class ConsumerChannelRegistry {
 		return channel;
 	}
 
-	private static class ChannelHolder {
+	private static final class ChannelHolder {
 
 		private final Channel channel;
 
@@ -110,11 +115,11 @@ public class ConsumerChannelRegistry {
 		}
 
 		private Channel getChannel() {
-			return channel;
+			return this.channel;
 		}
 
 		private ConnectionFactory getConnectionFactory() {
-			return connectionFactory;
+			return this.connectionFactory;
 		}
 	}
 }

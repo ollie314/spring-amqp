@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.listener;
@@ -30,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.log4j.Level;
+import org.apache.logging.log4j.Level;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
@@ -420,7 +423,7 @@ public class MessageListenerRecoveryCachingConnectionIntegrationTests {
 			template.convertAndSend("nonexistent", "foo" + i);
 		}
 		assertTrue(latch.await(10, TimeUnit.SECONDS));
-		Map<?,?> consumers = TestUtils.getPropertyValue(container, "consumers", Map.class);
+		Map<?, ?> consumers = TestUtils.getPropertyValue(container, "consumers", Map.class);
 		assertEquals(1, consumers.size());
 		Object consumer = consumers.keySet().iterator().next();
 
@@ -522,7 +525,8 @@ public class MessageListenerRecoveryCachingConnectionIntegrationTests {
 					// intentional error (causes exception on connection thread):
 					throw new RuntimeException("Planned");
 				}
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}
@@ -545,7 +549,8 @@ public class MessageListenerRecoveryCachingConnectionIntegrationTests {
 			if (failed.compareAndSet(false, true)) {
 				// intentional error (causes exception on connection thread):
 				channel.abort();
-			} else {
+			}
+			else {
 				latch.countDown();
 			}
 		}
@@ -571,7 +576,8 @@ public class MessageListenerRecoveryCachingConnectionIntegrationTests {
 			if (failed.compareAndSet(false, true)) {
 				// intentional error (causes exception on connection thread):
 				connection.close();
-			} else {
+			}
+			else {
 				latch.countDown();
 			}
 		}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core;
 
 import static org.hamcrest.Matchers.containsString;
@@ -24,11 +25,10 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import java.io.OutputStream;
 import java.lang.reflect.Method;
@@ -68,8 +68,6 @@ import org.springframework.amqp.utils.test.TestUtils;
 import org.springframework.beans.DirectFieldAccessor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.util.ReflectionUtils;
-import org.springframework.util.ReflectionUtils.MethodCallback;
-import org.springframework.util.ReflectionUtils.MethodFilter;
 import org.springframework.util.StopWatch;
 
 /**
@@ -230,13 +228,9 @@ public class BatchingRabbitTemplateTests {
 		final CountDownLatch latch = new CountDownLatch(2);
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(this.connectionFactory);
 		container.setQueueNames(ROUTE);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				received.add(message);
-				latch.countDown();
-			}
+		container.setMessageListener((MessageListener) message -> {
+			received.add(message);
+			latch.countDown();
 		});
 		container.setReceiveTimeout(100);
 		container.afterPropertiesSet();
@@ -269,13 +263,9 @@ public class BatchingRabbitTemplateTests {
 		final CountDownLatch latch = new CountDownLatch(count);
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(this.connectionFactory);
 		container.setQueueNames(ROUTE);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				received.add(message);
-				latch.countDown();
-			}
+		container.setMessageListener((MessageListener) message -> {
+			received.add(message);
+			latch.countDown();
 		});
 		container.setReceiveTimeout(100);
 		container.setPrefetchCount(1000);
@@ -309,21 +299,16 @@ public class BatchingRabbitTemplateTests {
 	public void testDebatchByContainerBadMessageRejected() throws Exception {
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(this.connectionFactory);
 		container.setQueueNames(ROUTE);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-			}
-		});
+		container.setMessageListener((MessageListener) message -> { });
 		container.setReceiveTimeout(100);
 		ConditionalRejectingErrorHandler errorHandler = new ConditionalRejectingErrorHandler();
 		container.setErrorHandler(errorHandler);
 		container.afterPropertiesSet();
 		container.start();
 		Log logger = spy(TestUtils.getPropertyValue(errorHandler, "logger", Log.class));
-		new DirectFieldAccessor(errorHandler).setPropertyValue("logger", logger);
-		when(logger.isWarnEnabled()).thenReturn(true);
+		doReturn(true).when(logger).isWarnEnabled();
 		doAnswer(new DoesNothing()).when(logger).warn(anyString(), any(Throwable.class));
+		new DirectFieldAccessor(errorHandler).setPropertyValue("logger", logger);
 		try {
 			RabbitTemplate template = new RabbitTemplate();
 			template.setConnectionFactory(this.connectionFactory);
@@ -334,7 +319,7 @@ public class BatchingRabbitTemplateTests {
 			Thread.sleep(1000);
 			ArgumentCaptor<Object> arg1 = ArgumentCaptor.forClass(Object.class);
 			ArgumentCaptor<Throwable> arg2 = ArgumentCaptor.forClass(Throwable.class);
-			verify(logger, times(2)).warn(arg1.capture(), arg2.capture()); // CRE logs 2 WARNs ensure the message was rejected
+			verify(logger).warn(arg1.capture(), arg2.capture());
 			assertThat(arg2.getValue().getMessage(), containsString("Bad batched message received"));
 		}
 		finally {
@@ -463,10 +448,11 @@ public class BatchingRabbitTemplateTests {
 	}
 
 	private Message receive(BatchingRabbitTemplate template) throws InterruptedException {
-		Message message = null;
+		Message message = template.receive(ROUTE);
 		int n = 0;
-		while (n++ < 200 && (message = template.receive(ROUTE)) == null) {
+		while (n++ < 200 && message == null) {
 			Thread.sleep(50);
+			message = template.receive(ROUTE);
 		}
 		assertNotNull(message);
 		return message;
@@ -478,13 +464,9 @@ public class BatchingRabbitTemplateTests {
 		final CountDownLatch latch = new CountDownLatch(2);
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(this.connectionFactory);
 		container.setQueueNames(ROUTE);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				received.add(message);
-				latch.countDown();
-			}
+		container.setMessageListener((MessageListener) message -> {
+			received.add(message);
+			latch.countDown();
 		});
 		container.setReceiveTimeout(100);
 		container.setAfterReceivePostProcessors(new DelegatingDecompressingPostProcessor());
@@ -514,20 +496,10 @@ public class BatchingRabbitTemplateTests {
 
 	private int getStreamLevel(Object stream) throws Exception {
 		final AtomicReference<Method> m = new AtomicReference<Method>();
-		ReflectionUtils.doWithMethods(AbstractCompressingPostProcessor.class, new MethodCallback() {
-
-			@Override
-			public void doWith(Method method) throws IllegalArgumentException, IllegalAccessException {
-				method.setAccessible(true);
-				m.set(method);
-			}
-		}, new MethodFilter() {
-
-			@Override
-			public boolean matches(Method method) {
-				return method.getName().equals("getCompressorStream");
-			}
-		});
+		ReflectionUtils.doWithMethods(AbstractCompressingPostProcessor.class, method -> {
+			method.setAccessible(true);
+			m.set(method);
+		}, method -> method.getName().equals("getCompressorStream"));
 		Object zipStream = m.get().invoke(stream, mock(OutputStream.class));
 		return TestUtils.getPropertyValue(zipStream, "def.level", Integer.class);
 	}

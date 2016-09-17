@@ -1,11 +1,11 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,6 +26,7 @@ import static org.mockito.Matchers.anyMap;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -46,8 +47,6 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Matchers;
 import org.mockito.internal.stubbing.answers.CallsRealMethods;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.utils.test.TestUtils;
@@ -60,12 +59,10 @@ import com.rabbitmq.http.client.domain.QueueInfo;
 
 
 /**
- *
  * @author Gary Russell
+ * @author Artem Bilan
  */
 public class LocalizedQueueConnectionFactoryTests {
-
-	private final Map<String, Connection> connections = new HashMap<String, Connection>();
 
 	private final Map<String, Channel> channels = new HashMap<String, Channel>();
 
@@ -73,45 +70,44 @@ public class LocalizedQueueConnectionFactoryTests {
 
 	private final Map<String, String> consumerTags = new HashMap<String, String>();
 
-	private final CountDownLatch latch1 = new CountDownLatch(1);
-
-	private final CountDownLatch latch2 = new CountDownLatch(2);
-
 	@SuppressWarnings("unchecked")
 	@Test
 	public void testFailOver() throws Exception {
-		ConnectionFactory defaultConnectionFactory = mockCF("localhost:1234");
+		ConnectionFactory defaultConnectionFactory = mockCF("localhost:1234", null);
 		String rabbit1 = "localhost:1235";
 		String rabbit2 = "localhost:1236";
-		String[] addresses = new String[] { rabbit1, rabbit2 };
-		String[] adminUris = new String[] { "http://localhost:11235", "http://localhost:11236" };
-		String[] nodes = new String[] { "rabbit@foo", "rabbit@bar" };
+		String[] addresses = new String[]{rabbit1, rabbit2};
+		String[] adminUris = new String[]{"http://localhost:11235", "http://localhost:11236"};
+		String[] nodes = new String[]{"rabbit@foo", "rabbit@bar"};
 		String vhost = "/";
 		String username = "guest";
 		String password = "guest";
 		final AtomicBoolean firstServer = new AtomicBoolean(true);
+		final Client client1 = doCreateClient(adminUris[0], username, password, nodes[0]);
+		final Client client2 = doCreateClient(adminUris[1], username, password, nodes[1]);
+		final Map<String, ConnectionFactory> mockCFs = new HashMap<String, ConnectionFactory>();
+		CountDownLatch latch1 = new CountDownLatch(1);
+		CountDownLatch latch2 = new CountDownLatch(1);
+		mockCFs.put(rabbit1, mockCF(rabbit1, latch1));
+		mockCFs.put(rabbit2, mockCF(rabbit2, latch2));
 		LocalizedQueueConnectionFactory lqcf = new LocalizedQueueConnectionFactory(defaultConnectionFactory, addresses,
 				adminUris, nodes, vhost, username, password, false, null) {
-
-			private final String[] nodes = new String[] { "rabbit@foo", "rabbit@bar" };
-
 
 			@Override
 			protected Client createClient(String adminUri, String username, String password)
 					throws MalformedURLException, URISyntaxException {
-				return doCreateClient(adminUri, username, password, firstServer.get() ? nodes[0] : nodes[1]);
+				return firstServer.get() ? client1 : client2;
 			}
-
 
 			@Override
 			protected ConnectionFactory createConnectionFactory(String address, String node) throws Exception {
-				return mockCF(address);
+				return mockCFs.get(address);
 			}
 
 		};
 		Log logger = spy(TestUtils.getPropertyValue(lqcf, "logger", Log.class));
+		doReturn(true).when(logger).isInfoEnabled();
 		new DirectFieldAccessor(lqcf).setPropertyValue("logger", logger);
-		when(logger.isInfoEnabled()).thenReturn(true);
 		doAnswer(new CallsRealMethods()).when(logger).debug(anyString());
 		ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
 		SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(lqcf);
@@ -130,8 +126,6 @@ public class LocalizedQueueConnectionFactoryTests {
 		// Fail rabbit1 and verify the container switches to rabbit2
 
 		firstServer.set(false);
-		when(channel.isOpen()).thenReturn(false);
-		when(this.connections.get(rabbit1).isOpen()).thenReturn(false);
 		this.consumers.get(rabbit1).handleCancel(consumerTags.get(rabbit1));
 		assertTrue(latch2.await(10, TimeUnit.SECONDS));
 		channel = this.channels.get(rabbit2);
@@ -166,45 +160,42 @@ public class LocalizedQueueConnectionFactoryTests {
 		try {
 			String rabbit1 = "localhost:1235";
 			String rabbit2 = "localhost:1236";
-			String[] addresses = new String[] { rabbit1, rabbit2 };
-			String[] adminUris = new String[] { "http://localhost:11235", "http://localhost:11236" };
-			String[] nodes = new String[] { "rabbit@foo", "rabbit@bar" };
+			String[] addresses = new String[]{rabbit1, rabbit2};
+			String[] adminUris = new String[]{"http://localhost:11235", "http://localhost:11236"};
+			String[] nodes = new String[]{"rabbit@foo", "rabbit@bar"};
 			String vhost = "/";
 			String username = "guest";
 			String password = "guest";
-			LocalizedQueueConnectionFactory lqcf = new LocalizedQueueConnectionFactory(mockCF("localhost:1234"),
+			LocalizedQueueConnectionFactory lqcf = new LocalizedQueueConnectionFactory(mockCF("localhost:1234", null),
 					addresses, adminUris, nodes, vhost, username, password, false, null);
 			lqcf.getTargetConnectionFactory("[foo, bar]");
 		}
 		catch (IllegalArgumentException e) {
-			assertThat(e.getMessage(), containsString("Cannot use LocalizedQueueConnectionFactory with more than one queue: [foo, bar]"));
+			assertThat(e.getMessage(),
+					containsString("Cannot use LocalizedQueueConnectionFactory with more than one queue: [foo, bar]"));
 		}
 	}
 
 	@SuppressWarnings("unchecked")
-	private ConnectionFactory mockCF(final String address) throws Exception {
+	private ConnectionFactory mockCF(final String address, final CountDownLatch latch) throws Exception {
 		ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
 		Connection connection = mock(Connection.class);
 		Channel channel = mock(Channel.class);
 		when(connectionFactory.createConnection()).thenReturn(connection);
 		when(connection.createChannel(false)).thenReturn(channel);
-		when(connection.isOpen()).thenReturn(true);
-		when(channel.isOpen()).thenReturn(true);
-		doAnswer(new Answer<String>() {
-
-			@Override
-			public String answer(InvocationOnMock invocation) throws Throwable {
-				String tag = UUID.randomUUID().toString();
-				consumers.put(address, (Consumer) invocation.getArguments()[6]);
-				consumerTags.put(address, tag);
-				latch1.countDown();
-				latch2.countDown();
-				return tag;
+		when(connection.isOpen()).thenReturn(true, false);
+		when(channel.isOpen()).thenReturn(true, false);
+		doAnswer(invocation -> {
+			String tag = UUID.randomUUID().toString();
+			consumers.put(address, (Consumer) invocation.getArguments()[6]);
+			consumerTags.put(address, tag);
+			if (latch != null) {
+				latch.countDown();
 			}
+			return tag;
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(),
 				any(Consumer.class));
 		when(connectionFactory.getHost()).thenReturn(address);
-		this.connections.put(address, connection);
 		this.channels.put(address, channel);
 		return connectionFactory;
 	}

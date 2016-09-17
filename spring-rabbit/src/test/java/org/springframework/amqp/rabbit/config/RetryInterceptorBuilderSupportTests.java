@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.config;
 
 import static org.junit.Assert.assertEquals;
@@ -34,8 +35,6 @@ import org.junit.Test;
 import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
-import org.springframework.amqp.rabbit.retry.MessageKeyGenerator;
-import org.springframework.amqp.rabbit.retry.NewMessageIdentifier;
 import org.springframework.amqp.rabbit.retry.RepublishMessageRecoverer;
 import org.springframework.amqp.utils.test.TestUtils;
 import org.springframework.aop.Pointcut;
@@ -112,14 +111,10 @@ public class RetryInterceptorBuilderSupportTests {
 		StatefulRetryOperationsInterceptor interceptor =
 				RetryInterceptorBuilder.stateful()
 					.maxAttempts(5)
-					.newMessageIdentifier(new NewMessageIdentifier() {
-
-							@Override
-							public boolean isNew(Message message) {
-								latch.countDown();
-								return false;
-							}
-						})
+					.newMessageIdentifier(message -> {
+						latch.countDown();
+						return false;
+					})
 					.backOffPolicy(new FixedBackOffPolicy())
 					.build();
 
@@ -142,7 +137,7 @@ public class RetryInterceptorBuilderSupportTests {
 	public void testWitCustomRetryPolicyTraverseCause() {
 		StatefulRetryOperationsInterceptor interceptor = RetryInterceptorBuilder.stateful()
 				.retryPolicy(new SimpleRetryPolicy(15, Collections
-						.<Class<? extends Throwable>, Boolean> singletonMap(Exception.class, true), true))
+						.<Class<? extends Throwable>, Boolean>singletonMap(Exception.class, true), true))
 				.build();
 		assertEquals(15, TestUtils.getPropertyValue(interceptor, "retryOperations.retryPolicy.maxAttempts"));
 	}
@@ -151,14 +146,10 @@ public class RetryInterceptorBuilderSupportTests {
 	public void testWithCustomKeyGenerator() throws Exception {
 		final CountDownLatch latch = new CountDownLatch(1);
 		StatefulRetryOperationsInterceptor interceptor = RetryInterceptorBuilder.stateful()
-				.messageKeyGenerator(new MessageKeyGenerator() {
-
-						@Override
-						public Object getKey(Message message) {
-							latch.countDown();
-							return "foo";
-						}
-					})
+				.messageKeyGenerator(message -> {
+					latch.countDown();
+					return "foo";
+				})
 				.build();
 
 		assertEquals(3, TestUtils.getPropertyValue(interceptor, "retryOperations.retryPolicy.maxAttempts"));
@@ -275,7 +266,7 @@ public class RetryInterceptorBuilderSupportTests {
 	}
 
 
-	static interface Foo {
+	interface Foo {
 
 		void onMessage(String s, Message message);
 	}

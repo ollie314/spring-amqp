@@ -1,35 +1,51 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core;
 
+import static org.hamcrest.Matchers.greaterThan;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
+import java.util.UUID;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
 import org.springframework.amqp.AmqpIOException;
+import org.springframework.amqp.core.AbstractExchange;
+import org.springframework.amqp.core.AnonymousQueue;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Binding.DestinationType;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Exchange;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageBuilder;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.RabbitUtils;
 import org.springframework.amqp.rabbit.test.BrokerRunning;
 import org.springframework.amqp.rabbit.test.BrokerTestUtils;
 import org.springframework.context.support.GenericApplicationContext;
@@ -79,7 +95,7 @@ public class RabbitAdminIntegrationTests {
 		if (context != null) {
 			context.close();
 		}
-		if (connectionFactory!=null) {
+		if (connectionFactory != null) {
 			connectionFactory.destroy();
 		}
 	}
@@ -107,7 +123,8 @@ public class RabbitAdminIntegrationTests {
 		new RabbitAdmin(connectionFactory1).declareQueue(queue);
 		try {
 			new RabbitAdmin(connectionFactory2).declareQueue(queue);
-		} finally {
+		}
+		finally {
 			// Need to release the connection so the exclusive queue is deleted
 			connectionFactory1.destroy();
 			connectionFactory2.destroy();
@@ -235,6 +252,18 @@ public class RabbitAdminIntegrationTests {
 	}
 
 	@Test
+	public void testDeleteExchangeWithInternalOption() throws Exception {
+		String exchangeName = "test.exchange.internal";
+		AbstractExchange exchange = new DirectExchange(exchangeName);
+		exchange.setInternal(true);
+		rabbitAdmin.declareExchange(exchange);
+
+		boolean result = rabbitAdmin.deleteExchange(exchangeName);
+
+		assertTrue(result);
+	}
+
+	@Test
 	public void testDeclareBindingWithDefaultExchangeImplicitBinding() throws Exception {
 		Exchange exchange = new DirectExchange(RabbitAdmin.DEFAULT_EXCHANGE_NAME);
 		String queueName = "test.queue";
@@ -287,7 +316,8 @@ public class RabbitAdminIntegrationTests {
 
 		try {
 			rabbitAdmin.declareBinding(binding);
-		} catch (AmqpIOException ex) {
+		}
+		catch (AmqpIOException ex) {
 			Throwable cause = ex;
 			Throwable rootCause = null;
 			while (cause != null) {
@@ -312,7 +342,8 @@ public class RabbitAdminIntegrationTests {
 
 		try {
 			rabbitAdmin.declareBinding(binding);
-		} catch (AmqpIOException ex) {
+		}
+		catch (AmqpIOException ex) {
 			Throwable cause = ex;
 			Throwable rootCause = null;
 			while (cause != null) {
@@ -322,6 +353,61 @@ public class RabbitAdminIntegrationTests {
 			assertTrue(rootCause.getMessage().contains("reply-code=403"));
 			assertTrue(rootCause.getMessage().contains("operation not permitted on the default exchange"));
 		}
+	}
+
+	@Test
+	public void testQueueDeclareBad() {
+		this.rabbitAdmin.setIgnoreDeclarationExceptions(true);
+		Queue queue = new AnonymousQueue();
+		assertEquals(queue.getName(), this.rabbitAdmin.declareQueue(queue));
+		queue = new Queue(queue.getName());
+		assertNull(this.rabbitAdmin.declareQueue(queue));
+		this.rabbitAdmin.deleteQueue(queue.getName());
+	}
+
+	@Test
+	public void testDeclareDelayedExchange() throws Exception {
+		DirectExchange exchange = new DirectExchange("test.delayed.exchange");
+		exchange.setDelayed(true);
+		Queue queue = new Queue(UUID.randomUUID().toString(), true, false, false);
+		Binding binding = new Binding(queue.getName(), DestinationType.QUEUE, exchange.getName(), queue.getName(), null);
+
+		try {
+			this.rabbitAdmin.declareExchange(exchange);
+		}
+		catch (AmqpIOException e) {
+			if (RabbitUtils.isExchangeDeclarationFailure(e)
+					&& e.getCause().getCause().getMessage().contains("exchange type 'x-delayed-message'")) {
+				Assume.assumeTrue("Broker does not have the delayed message exchange plugin installed", false);
+			}
+			else {
+				throw e;
+			}
+		}
+		this.rabbitAdmin.declareQueue(queue);
+		this.rabbitAdmin.declareBinding(binding);
+
+		RabbitTemplate template = new RabbitTemplate(this.connectionFactory);
+		template.setReceiveTimeout(10000);
+		template.convertAndSend(exchange.getName(), queue.getName(), "foo", message -> {
+			message.getMessageProperties().setDelay(1000);
+			return message;
+		});
+		MessageProperties properties = new MessageProperties();
+		properties.setDelay(500);
+		template.send(exchange.getName(), queue.getName(),
+				MessageBuilder.withBody("foo".getBytes()).andProperties(properties).build());
+		long t1 = System.currentTimeMillis();
+		Message received = template.receive(queue.getName());
+		assertNotNull(received);
+		assertEquals(Integer.valueOf(500), received.getMessageProperties().getReceivedDelay());
+		received = template.receive(queue.getName());
+		assertNotNull(received);
+		assertEquals(Integer.valueOf(1000), received.getMessageProperties().getReceivedDelay());
+		assertThat(System.currentTimeMillis() - t1, greaterThan(950L));
+
+		this.rabbitAdmin.deleteQueue(queue.getName());
+		this.rabbitAdmin.deleteExchange(exchange.getName());
 	}
 
 	/**
@@ -340,10 +426,13 @@ public class RabbitAdminIntegrationTests {
 		try {
 			DeclareOk result = channel.queueDeclarePassive(queue.getName());
 			return result != null;
-		} catch (IOException e) {
+		}
+		catch (IOException e) {
 			return e.getCause().getMessage().contains("RESOURCE_LOCKED");
-		} finally {
+		}
+		finally {
 			connection.close();
 		}
 	}
+
 }

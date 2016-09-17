@@ -24,7 +24,11 @@ This part also includes a chapter about the <<sample-apps,sample applications>>.
 
 include::amqp.adoc[]
 
+include::logging.adoc[]
+
 include::sample-apps.adoc[]
+
+include::testing.adoc[]
 
 == Spring Integration - Reference
 
@@ -39,3 +43,6 @@ include::si-amqp.adoc[]
 In addition to this reference documentation, there exist a number of other resources that may help you learn about AMQP.
 
 include::further-reading.adoc[]
+
+[appendix]
+include::appendix.adoc[]

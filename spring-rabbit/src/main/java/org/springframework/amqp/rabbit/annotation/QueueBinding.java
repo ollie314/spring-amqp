@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 the original author or authors.
+ * Copyright 2015-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.annotation;
 
 import java.lang.annotation.Retention;
@@ -45,5 +46,17 @@ public @interface QueueBinding {
 	 * @return the routing key or pattern for the binding.
 	 */
 	String key() default "";
+
+	/**
+	 * @return true if the declaration exceptions should be ignored.
+	 * @since 1.6
+	 */
+	String ignoreDeclarationExceptions() default "false";
+
+	/**
+	 * @return the arguments to apply when declaring this binding
+	 * @since 1.6
+	 */
+	Argument[] arguments() default {};
 
 }

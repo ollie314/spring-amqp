@@ -120,7 +120,7 @@ public class Queue  {
 
     // Getters and Setters omitted for brevity
 
-
+}
 ----
 
 Notice that the constructor takes the Queue name.
@@ -191,13 +191,23 @@ As you can imagine, the connection instance provides a `createChannel` method.
 The `CachingConnectionFactory` implementation supports caching of those channels, and it maintains separate caches for channels based on whether they are transactional or not.
 When creating an instance of `CachingConnectionFactory`, the 'hostname' can be provided via the constructor.
 The 'username' and 'password' properties should be provided as well.
-If you would like to configure the size of the channel cache (the default is 1), you could call the `setChannelCacheSize()` method here as well.
+If you would like to configure the size of the channel cache (the default is 25), you could call the
+`setChannelCacheSize()` method here as well.
 
 Starting with _version 1.3_, the `CachingConnectionFactory` can be configured to cache connections as well as just channels.
 In this case, each call to `createConnection()` creates a new connection (or retrieves an idle one from the cache).
 Closing a connection returns it to the cache (if the cache size has not been reached).
 Channels created on such connections are cached too.
-The use of separate connections might be useful in some environments, such as consuming from an HA cluster, in conjunction with a load balancer, to connect to different cluster members.
+The use of separate connections might be useful in some environments, such as consuming from an HA cluster, in
+conjunction with a load balancer, to connect to different cluster members.
+Set the `cacheMode` to `CacheMode.CONNECTION`.
+
+NOTE: This does not limit the number of connections, it specifies how many idle open connections are allowed.
+
+Starting with _version 1.5.5_, a new property `connectionLimit` is provided.
+When this is set, it limits the total number of connections allowed.
+When set, if the limit is reached, the `channelCheckoutTimeLimit` is used to wait for a connection to become idle.
+If the time is exceeded, an `AmqpTimeoutException` is thrown.
 
 [IMPORTANT]
 ======
@@ -213,6 +223,14 @@ If multiple channels are created on each connection then the pool size will affe
 It is important to understand that the cache size is (by default) not a limit, but merely the number of channels that can be cached.
 With a cache size of, say, 10, any number of channels can actually be in use.
 If more than 10 channels are being used and they are all returned to the cache, 10 will go in the cache; the remainder will be physically closed.
+
+Starting with _version 1.6_, the default channel cache size has been increased from 1 to 25.
+In high volume, multi-threaded, environments, a small cache means that channels are created and closed at a high rate.
+Increasing the default cache size will avoid this overhead.
+You should monitor the channels in use via the RabbitMQ Admin UI and consider increasing the cache size further if you
+see many channels being created and closed.
+The cache will only grow on-demand (to suit the concurrency requirements of the application) so this change will not
+impact existing low-volume applications.
 
 Starting with _version 1.4.2_, the `CachingConnectionFactory` has a property `channelCheckoutTimeout`.
 When this property is greater than zero, the `channelCacheSize` becomes a limit on the number of channels that can be created on a connection.
@@ -257,7 +275,7 @@ A `ConnectionFactory` can be created quickly and conveniently using the rabbit n
 
 In most cases this will be preferable since the framework can choose the best defaults for you.
 The created instance will be a `CachingConnectionFactory`.
-Keep in mind that the default cache size for channels is 1.
+Keep in mind that the default cache size for channels is 25.
 If you want more channels to be cached set a larger value via the 'channelCacheSize' property.
 In XML it would look like this:
 
@@ -268,7 +286,7 @@ In XML it would look like this:
     <constructor-arg value="somehost"/>
     <property name="username" value="guest"/>
     <property name="password" value="guest"/>
-    <property name="channelCacheSize" value="25"/>
+    <property name="channelCacheSize" value="50"/>
 </bean>
 ----
 
@@ -277,7 +295,7 @@ And with the namespace you can just add the 'channel-cache-size' attribute:
 [source,xml]
 ----
 <rabbit:connection-factory
-    id="connectionFactory" channel-cache-size="25"/>
+    id="connectionFactory" channel-cache-size="50"/>
 ----
 
 The default cache mode is CHANNEL, but you can configure it to cache connections instead; in this case, we use `connection-cache-size`:
@@ -304,6 +322,20 @@ Alternatively, if running in a clustered environment, use the addresses attribut
     id="connectionFactory" addresses="host1:5672,host2:5672"/>
 ----
 
+Here's an example with a custom thread factory that prefixes thread names with `rabbitmq-`.
+
+[source, xml]
+----
+<rabbit:connection-factory id="multiHost" virtual-host="/bar" addresses="host1:1234,host2,host3:4567"
+    thread-factory="tf"
+    channel-cache-size="10" username="user" password="password" />
+
+<bean id="tf" class="org.springframework.scheduling.concurrent.CustomizableThreadFactory">
+    <constructor-arg value="rabbitmq-" />
+</bean>
+
+----
+
 [[connection-factory]]
 ===== Configuring the Underlying Client Connection Factory
 
@@ -319,7 +351,7 @@ For convenience, a factory bean is provided to assist in configuring the connect
       id="connectionFactory" connection-factory="rabbitConnectionFactory"/>
 ----
 
-===== Configuring SSL
+===== RabbitConnectionFactoryBean and Configuring SSL
 
 Starting with _version 1.4_, a convenient `RabbitConnectionFactoryBean` is provided to enable convenient configuration of SSL properties on the underlying client connection factory, using dependency injection.
 Other setters simply delegate to the underlying factory.
@@ -388,14 +420,14 @@ For convenience, Spring AMQP provides the `SimpleRoutingConnectionFactory`, whic
 ----
 public class MyService {
 
-	@Autowired
-	private RabbitTemplate rabbitTemplate;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
 
-	public void service(String vHost, String payload) {
-		SimpleResourceHolder.bind(rabbitTemplate.getConnectionFactory(), vHost);
-		rabbitTemplate.convertAndSend(payload);
-		SimpleResourceHolder.unbind(rabbitTemplate.getConnectionFactory());
-	}
+    public void service(String vHost, String payload) {
+        SimpleResourceHolder.bind(rabbitTemplate.getConnectionFactory(), vHost);
+        rabbitTemplate.convertAndSend(payload);
+        SimpleResourceHolder.unbind(rabbitTemplate.getConnectionFactory());
+    }
 
 }
 ----
@@ -495,6 +527,46 @@ These features are explained further in the following sections.
 
 TIP: For some more background information, please see the following blog post by the RabbitMQ team titled http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-confirms/[Introducing Publisher Confirms].
 
+[[connection-channel-listeners]]
+===== Connection and Channel Listeners
+
+The connection factory supports registering `ConnectionListener` and `ChannelListener` implementations.
+This allows you to receive notifications for connection and channel related events.
+(A `ConnectionListener` is used by the `RabbitAdmin` to perform declarations when the connection is established - see <<automatic-declaration>> for more information).
+
+.ConnectionListener
+[source, java]
+----
+@FunctionalInterface
+public interface ConnectionListener {
+
+    void onCreate(Connection connection);
+
+    default void onClose(Connection connection) {
+    }
+
+    default void onShutDown(ShutdownSignalException signal) {
+    }
+
+}
+----
+
+.ChannelListener
+[source, java]
+----
+@FunctionalInterface
+public interface ChannelListener {
+
+    void onCreate(Channel channel, boolean transactional);
+
+    default void onShutDown(ShutdownSignalException signal) {
+    }
+
+}
+----
+
+See <<publishing-is-async>> for one scenario where you might want to register a `ChannelListener`.
+
 [[channel-close-logging]]
 ===== Logging Channel Close Events
 
@@ -512,6 +584,118 @@ To modify this behavior, inject a custom `ConditionalExceptionLogger` into the
 `CachingConnectionFactory` in its `closeExceptionLogger` property.
 
 Also see <<consumer-events>>.
+
+[[runtime-cache-properties]]
+===== Runtime Cache Properties
+
+Staring with _version 1.6_, the `CachingConnectionFactory` now provides cache statistics via the `getCacheProperties()`
+method.
+These statistics can be used to tune the cache to optimize it in production.
+For example, the high water marks can be used to determine whether the cache size should be increased.
+If it equals the cache size, you might want to consider increasing further.
+
+.Cache properties for CacheMode.CHANNEL
+[cols="2l,4", options="header"]
+|===
+| Property
+
+| Meaning
+
+| channelCacheSize
+
+| The currently configured maximum channels that are allowed to be idle.
+
+| localPort
+
+| The local port for the connection (if available).
+This can be used to correlate with connections/channels on the RabbitMQ Admin UI.
+
+| idleChannelsTx
+
+| The number of transactional channels that are currently idle (cached).
+
+| idleChannelsNotTx
+
+| The number of non-transactional channels that are currently idle (cached).
+
+| idleChannelsTxHighWater
+
+| The maximum number of transactional channels that have been concurrently idle (cached).
+
+| idleChannelsNotTxHighWater
+
+| The maximum number of non-transactional channels have been concurrently idle (cached).
+
+|===
+
+.Cache properties for CacheMode.CONNECTION
+[cols="2l,4", options="header"]
+|===
+| Property
+
+| Meaning
+
+| openConnections
+
+| The number of connection objects representing connections to brokers.
+
+| channelCacheSize
+
+| The currently configured maximum channels that are allowed to be idle.
+
+| connectionCacheSize
+
+| The currently configured maximum connections that are allowed to be idle.
+
+| idleConnections
+
+| The number of connections that are currently idle.
+
+| idleConnectionsHighWater
+
+| The maximum number of connections that have been concurrently idle.
+
+| idleChannelsTx:<localPort>
+
+| The number of transactional channels that are currently idle (cached) for this connection.
+The localPort part of the property name can be used to correlate with connections/channels on the RabbitMQ Admin UI.
+
+| idleChannelsNotTx:<localPort>
+
+| The number of non-transactional channels that are currently idle (cached) for this connection.
+The localPort part of the property name can be used to correlate with connections/channels on the RabbitMQ Admin UI.
+
+| idleChannelsTxHighWater:
+<localPort>
+
+| The maximum number of transactional channels that have been concurrently idle (cached).
+The localPort part of the property name can be used to correlate with connections/channels on the RabbitMQ Admin UI.
+
+| idleChannelsNotTxHighWater:
+<localPort>
+
+| The maximum number of non-transactional channels have been concurrently idle (cached).
+The localPort part of the property name can be used to correlate with connections/channels on the RabbitMQ Admin UI.
+
+|===
+
+The `cacheMode` property (`CHANNEL` or `CONNECTION` is also included).
+
+.JVisualVM Example
+image::images/cacheStats.png[align="center"]
+
+[[custom-client-props]]
+==== Adding Custom Client Connection Properties
+
+The `CachingConnectionFactory` now allows you to access the underlying connection factory to allow, for example,
+setting custom client properties:
+
+[source, java]
+----
+connectionFactory.getRabbitConnectionFactory().getClientProperties().put("foo", "bar");
+----
+
+These properties appear in the RabbitMQ Admin UI when viewing the connection.
 
 [[amqp-template]]
 ==== AmqpTemplate
@@ -532,6 +716,8 @@ In the examples that follow, you will often see usage of an "AmqpTemplate", but 
 As mentioned above, the `AmqpTemplate` interface defines all of the basic operations for sending and receiving Messages.
 We will explore Message sending and reception, respectively, in the two sections that follow.
 
+See also <<async-template>>.
+
 [[template-retry]]
 ===== Adding Retry Capabilities
 
@@ -545,13 +731,13 @@ Using the XML namespace:
 <rabbit:template id="template" connection-factory="connectionFactory" retry-template="retryTemplate"/>
 
 <bean id="retryTemplate" class="org.springframework.retry.support.RetryTemplate">
-	<property name="backOffPolicy">
-		<bean class="org.springframework.retry.backoff.ExponentialBackOffPolicy">
-			<property name="initialInterval" value="500" />
-			<property name="multiplier" value="10.0" />
-			<property name="maxInterval" value="10000" />
-		</bean>
-	</property>
+    <property name="backOffPolicy">
+        <bean class="org.springframework.retry.backoff.ExponentialBackOffPolicy">
+            <property name="initialInterval" value="500" />
+            <property name="multiplier" value="10.0" />
+            <property name="maxInterval" value="10000" />
+        </bean>
+    </property>
 </bean>
 ----
 
@@ -561,15 +747,15 @@ Using `@Configuration`:
 ----
 @Bean
 public AmqpTemplate rabbitTemplate();
-		RabbitTemplate template = new RabbitTemplate(connectionFactory());
-		RetryTemplate retryTemplate = new RetryTemplate();
-		ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
-		backOffPolicy.setInitialInterval(500);
-		backOffPolicy.setMultiplier(10.0);
-		backOffPolicy.setMaxInterval(10000);
-		retryTemplate.setBackOffPolicy(backOffPolicy);
-		template.setRetryTemplate(retryTemplate);
-		return template;
+    RabbitTemplate template = new RabbitTemplate(connectionFactory());
+    RetryTemplate retryTemplate = new RetryTemplate();
+    ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+    backOffPolicy.setInitialInterval(500);
+    backOffPolicy.setMultiplier(10.0);
+    backOffPolicy.setMaxInterval(10000);
+    retryTemplate.setBackOffPolicy(backOffPolicy);
+    template.setRetryTemplate(retryTemplate);
+    return template;
 }
 ----
 
@@ -590,6 +776,7 @@ retryTemplate.execute(
             context.setAttribute("message", message);
             return rabbitTemplate.convertAndSend(exchange, routingKey, message);
         }
+
     }, new RecoveryCallback<Object>() {
 
         @Override
@@ -604,6 +791,42 @@ retryTemplate.execute(
 ----
 
 In this case, you would *not* inject a `RetryTemplate` into the `RabbitTemplate`.
+
+[[publishing-is-async]]
+===== Publishing is Asynchronous - How to Detect Success and Failures
+
+Publishing messages is an asynchronous mechanism and, by default, messages that can't be routed are simply dropped by RabbitMQ.
+For successful publishing you can receive an async confirmation as described in <<template-confirms>> below.
+Let's consider two failure scenarios:
+
+- publish to an exchange but there is no matching destination queue
+- publish to a non-existent exchange
+
+The first case is covered by publisher returns as described in <<template-confirms>> below.
+
+For the second case, the message is dropped, no return is generated; the underlying channel is closed with an exception.
+By default, this exception is logged, but you can register a `ChannelListener` with the `CachingConnectionFactory` to obtain notifications of such events:
+
+[source, java]
+----
+this.connectionFactory.addConnectionListener(new ConnectionListener() {
+
+    @Override
+    public void onCreate(Connection connection) {
+    }
+
+    @Override
+    public void onShutDown(ShutdownSignalException signal) {
+        ...
+    }
+
+});
+----
+
+You can examine the signal's `reason` property to determine the problem that occurred.
+
+To detect the exception on the sending thread, you can `setChannelTransacted(true)` on the `RabbitTemplate` and the exception will be detected on the `txCommit()`.
+However, *transactions significantly impede performance* so consider this carefully before enabling transactions for just this one use case.
 
 [[template-confirms]]
 ===== Publisher Confirms and Returns
@@ -647,7 +870,10 @@ NOTE: When a rabbit template send operation completes, the channel is closed; th
 When the cache is full, the framework defers the close for up to 5 seconds, in order to allow time for the confirms/returns to be received.
 When using confirms, the channel will be closed when the last confirm is received.
 When using only returns, the channel will remain open for the full 5 seconds.
-It is generally recommended to set the connection factory's `channelCacheSize` to a large enough value so that the channel on which a message is published is returned to the cache instead of being closed.
+It is generally recommended to set the connection factory's `channelCacheSize` to a large enough value so that the
+channel on which a message is published is returned to the cache instead of being closed.
+You can monitor channel usage using the RabbitMQ management plugin; if you see channels being opened/closed rapidly you
+should consider increasing the cache size to reduce overhead on the server.
 
 [[template-messaging]]
 ===== Messaging integration
@@ -655,6 +881,24 @@ It is generally recommended to set the connection factory's `channelCacheSize` t
 Starting with _version 1.4_ `RabbitMessagingTemplate`, built on top of `RabbitTemplate`, provides an integration with the Spring Framework messaging abstraction, i.e.
 `org.springframework.messaging.Message`.
 This allows you to create the message to send in generic manner.
+
+[[template-user-id]]
+===== Validated User Id
+
+Starting with _version 1.6_, the template now supports a `user-id-expression` (`userIdExpression` when using Java configuration).
+If a message is sent, the user id property is set (if not already set) after evaluating this expression.
+The root object for the evaluation is the message to be sent.
+
+Examples:
+
+[source, xml]
+----
+<rabbit:template ... user-id-expression="'guest'" />
+
+<rabbit:template ... user-id-expression="@myConnectionFactory.username" />
+----
+
+The first example is a literal expression; the second obtains the `username` property from a connection factory bean in the application context.
 
 [[sending-messages]]
 ==== Sending messages
@@ -736,10 +980,10 @@ Starting with _version 1.3_, a message builder API is provided by the `MessageBu
 [source,java]
 ----
 Message message = MessageBuilder.withBody("foo".getBytes())
-	.setContentType(MessageProperties.CONTENT_TYPE_TEXT_PLAIN)
-	.setMessageId("123")
-	.setHeader("bar", "baz")
-	.build();
+    .setContentType(MessageProperties.CONTENT_TYPE_TEXT_PLAIN)
+    .setMessageId("123")
+    .setHeader("bar", "baz")
+    .build();
 ----
 
 or
@@ -747,17 +991,16 @@ or
 [source,java]
 ----
 MessageProperties props = MessagePropertiesBuilder.newInstance()
-	.setContentType(MessageProperties.CONTENT_TYPE_TEXT_PLAIN)
-	.setMessageId("123")
-	.setHeader("bar", "baz")
-	.build();
+    .setContentType(MessageProperties.CONTENT_TYPE_TEXT_PLAIN)
+    .setMessageId("123")
+    .setHeader("bar", "baz")
+    .build();
 Message message = MessageBuilder.withBody("foo".getBytes())
-	.andProperties(props)
-	.build();
-
+    .andProperties(props)
+    .build();
 ----
 
-Each of the properties defined on the http://docs.spring.io/spring-amqp/docs/latest-ga/api/org/springframework/amqp/core/MessageProperties.html[MessageProperies] can be set.
+Each of the properties defined on the http://docs.spring.io/spring-amqp/docs/latest-ga/api/org/springframework/amqp/core/MessageProperties.html[MessageProperties] can be set.
 Other methods include `setHeader(String key, String value)`, `removeHeader(String key)`, `removeHeaders()`, and `copyProperties(MessageProperties properties)`.
 Each property setting method has a `set*IfAbsent()` variant.
 In the cases where a default initial value exists, the method is named `set*IfAbsentOrDefault()`.
@@ -865,22 +1108,29 @@ We will look at an example of each approach in the next two sub-sections.
 The `AmqpTemplate` itself can be used for polled Message reception.
 By default, if no message is available, `null` is returned immediately; there is no blocking.
 Starting with _version 1.5_, you can now set a `receiveTimeout`, in milliseconds, and the receive methods will block for
-up to that long, waiting for a message. A value less than zero means block indefinitely (or at least until the
+up to that long, waiting for a message.
+A value less than zero means block indefinitely (or at least until the
 connection to the broker is lost).
+_Version 1.6_ introduced variants of the `receive` methods allowing the timeout to be passed in on each call.
 
 CAUTION: Since the receive operation creates a new `QueueingConsumer` for each message, this technique is not really
 appropriate for high-volume environments; consider using an asynchronous consumer, or a `receiveTimeout` of zero for
 those use cases.
 
-There are two simple 'receive' methods available.
+There are four simple 'receive' methods available.
 As with the Exchange on the sending side, there is a method that requires a default queue property having been set
 directly on the template itself, and there is a method that accepts a queue parameter at runtime.
+_Version 1.6_ introduced variants to accept `timeoutMillis` to override `receiveTimeout` on a per-request basis.
 
 [source,java]
 ----
 Message receive() throws AmqpException;
 
 Message receive(String queueName) throws AmqpException;
+
+Message receive(long timeoutMillis) throws AmqpException;
+
+Message receive(String queueName, long timeoutMillis) throws AmqpException;
 ----
 
 Just like in the case of sending messages, the `AmqpTemplate` has some convenience methods for receiving POJOs instead of `Message` instances, and implementations will provide a way to customize the `MessageConverter` used to create the `Object` returned:
@@ -890,6 +1140,10 @@ Just like in the case of sending messages, the `AmqpTemplate` has some convenien
 Object receiveAndConvert() throws AmqpException;
 
 Object receiveAndConvert(String queueName) throws AmqpException;
+
+Message receiveAndConvert(long timeoutMillis) throws AmqpException;
+
+Message receiveAndConvert(String queueName, long timeoutMillis) throws AmqpException;
 ----
 
 Similar to `sendAndReceive` methods, beginning with _version 1.3_, the `AmqpTemplate` has several convenience `receiveAndReply` methods for synchronously receiving, processing and replying to messages:
@@ -976,16 +1230,19 @@ public interface ChannelAwareMessageListener {
 
 If you prefer to maintain a stricter separation between your application logic and the messaging API, you can rely upon an adapter implementation that is provided by the framework.
 This is often referred to as "Message-driven POJO" support.
+
+NOTE: _Version 1.5_ introduced a more flexible mechanism for POJO messaging, the `@RabbitListener` annotation - see <<async-annotation-driven>> for more information.
+
 When using the adapter, you only need to provide a reference to the instance that the adapter itself should invoke.
 
 [source,java]
 ----
 MessageListenerAdapter listener = new MessageListenerAdapter(somePojo);
-    listener.setDefaultListenerMethod("myMethod");
+listener.setDefaultListenerMethod("myMethod");
 ----
 
 You can subclass the adapter and provide an implementation of `getListenerMethodName()` to dynamically select different methods based on the message.
-This method has two paramters, the `originalMessage` and `extractedMessage`, the latter being the result of any conversion.
+This method has two parameters, the `originalMessage` and `extractedMessage`, the latter being the result of any conversion.
 By default, a `SimpleMessageConverter` is configured; see <<simple-message-converter>> for more information and
 information about other converters available.
 
@@ -995,6 +1252,29 @@ to determine which queue a message was received from.
 Starting with _version 1.5_, you can configure a map of consumer queue/tag to method name, to dynamically select the
 method to call.
 If no entry is in the map, we fall back to the default listener method.
+The default listener method (if not set) is `handleMessage`.
+
+Starting with _version 2.0_, a convenient `FunctionalInterface` has been provided:
+
+[source, java]
+----
+@FunctionalInterface
+public interface ReplyingMessageListener<T, R> {
+
+	R handleMessage(T t);
+
+}
+----
+
+This facilitates convenient configuration of the adapter using Java 8 lamdas:
+
+[source, java]
+----
+new MessageListenerAdapter((ReplyingMessageListener<String, String>) data -> {
+    ...
+    return result;
+}));
+----
 
 ====== Container
 
@@ -1098,17 +1378,17 @@ You can also use conditional declaration (<<conditional-declaration>>) together 
 <rabbit:queue id="otherAnon" declared-by="containerAdmin" />
 
 <rabbit:direct-exchange name="otherExchange" auto-delete="true" declared-by="containerAdmin">
-	<rabbit:bindings>
-		<rabbit:binding queue="otherAnon" key="otherAnon" />
-	</rabbit:bindings>
+    <rabbit:bindings>
+        <rabbit:binding queue="otherAnon" key="otherAnon" />
+    </rabbit:bindings>
 </rabbit:direct-exchange>
 
 <rabbit:listener-container id="container2" auto-startup="false">
-	<rabbit:listener id="listener2" ref="foo" queues="otherAnon" admin="containerAdmin" />
+    <rabbit:listener id="listener2" ref="foo" queues="otherAnon" admin="containerAdmin" />
 </rabbit:listener-container>
 
 <rabbit:admin id="containerAdmin" connection-factory="rabbitConnectionFactory"
-	auto-startup="false" />
+    auto-startup="false" />
 ----
 
 In this case, the queue and exchange are declared by `containerAdmin` which has `auto-startup="false"` so the elements are not declared during context initialization.
@@ -1192,7 +1472,8 @@ The idea of the example above is that, whenever a message is available on the `o
 The annotated endpoint infrastructure creates a message listener container behind the scenes for each annotated method, using a `RabbitListenerContainerFactory`.
 
 In the example above, `myQueue` must already exist and be bound to some exchange.
-Starting with _version 1.5.0_, the queue can be declared and bound automatically, as long as a `RabbitAdmin` exists in the application context.
+Starting with _version 1.5.0_, the queue can be declared and bound automatically, as long as a `RabbitAdmin` exists
+in the application context.
 
 [source,java]
 ----
@@ -1202,7 +1483,7 @@ public class MyService {
 
   @RabbitListener(bindings = @QueueBinding(
         value = @Queue(value = "myQueue", durable = "true"),
-        exchange = @Exchange(value = "auto.exch"),
+        exchange = @Exchange(value = "auto.exch", ignoreDeclarationExceptions = "true"),
         key = "orderRoutingKey")
   )
   public void processOrder(String data) {
@@ -1210,7 +1491,7 @@ public class MyService {
   }
 
   @RabbitListener(bindings = @QueueBinding(
-        value = @Queue(),
+        value = @Queue,
         exchange = @Exchange(value = "auto.exch"),
         key = "invoiceRoutingKey")
   )
@@ -1221,12 +1502,93 @@ public class MyService {
 }
 ----
 
-In the first example, a queue `myQueue` will be declared automatically (durable) together with the exchange, if needed, and bound to the exchange with the routing key.
+In the first example, a queue `myQueue` will be declared automatically (durable) together with the exchange, if needed,
+and bound to the exchange with the routing key.
 In the second example, an anonymous (exclusive, auto-delete) queue will be declared and bound.
 Multiple `QueueBinding` entries can be provided, allowing the listener to listen to multiple queues.
 
+Only DIRECT, FANOUT, TOPIC and HEADERS, exchange types are supported with this mechanism.
+Use normal `@Bean` definitions when more advanced configuration is required.
+
+Notice `ignoreDeclarationExceptions` on the exchange in the first example.
+This allows, for example, binding to an existing exchange that might have different settings (such as `internal`).
+By default the properties of an existing exchange must match.
+
+Starting with _version 1.6_, you can now specify arguments within `@QueueBinding` annotations for queues, exchanges
+and bindings. For example:
+
+[source, java]
+----
+@RabbitListener(bindings = @QueueBinding(
+        value = @Queue(value = "auto.headers", autoDelete = "true",
+                        arguments = @Argument(name = "x-message-ttl", value = "10000",
+                                                type = "java.lang.Integer")),
+        exchange = @Exchange(value = "auto.headers", type = ExchangeTypes.HEADERS, autoDelete = "true"),
+        arguments = {
+                @Argument(name = "x-match", value = "all"),
+                @Argument(name = "foo", value = "bar"),
+                @Argument(name = "baz")
+        })
+)
+public String handleWithHeadersExchange(String foo) {
+    ...
+}
+----
+
+Notice that the `x-message-ttl` argument is set to 10 seconds for the queue.
+Since the argument type is not `String`, we have to specify its type; in this case `Integer`.
+As with all such declarations, if the queue exists already, the arguments must match those on the queue.
+For the header exchange, we set the binding arguments to match messages that have the header `foo` set to `bar` and
+the header `baz` must be present with any value.
+The `x-match` argument means both conditions must be satisfied.
+
+The argument name, value, and type can be property placeholders (`${...}`) or SpEL expressions (`#{...}`).
+The `name` must resolve to a `String`; the expression for `type` must resolve to a `Class` or the fully-qualified name of
+a class.
+The `value` must resolve to something that can be converted by the `DefaultConversionService` to the type (such as
+the `x-message-ttl` in the above example).
+
+If a name resolves to `null` or an empty `String`, that `@Argument` is ignored.
+
+[[meta-annotation-driven]]
+====== Meta-Annotations
+
+Sometimes you may want to use the same configuration for multiple listeners.
+To reduce the boilerplate configuration, you can use meta-annotations to create your own listener annotation:
+
+[source, java]
+----
+@Target({ElementType.TYPE, ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@RabbitListener(bindings = @QueueBinding(
+        value = @Queue,
+        exchange = @Exchange(value = "metaFanout", type = ExchangeTypes.FANOUT)))
+public @interface MyAnonFanoutListener {
+}
+
+public class MetaListener {
+
+    @MyAnonFanoutListener
+    public void handle1(String foo) {
+        ...
+    }
+
+    @MyAnonFanoutListener
+    public void handle2(String foo) {
+        ...
+    }
+
+}
+----
+
+In this example, each listener created by the `@MyAnonFanoutListener` annotation will bind an anonymous, auto-delete
+queue to the fanout exchange `metaFanout`.
+The meta-annotation mechanism is simple in that attributes on the user-defined annotation are *not* examined - so
+you can't override settings from the meta-annotation.
+Use normal `@Bean` definitions when more advanced configuration is required.
+
 [[async-annotation-driven-enable]]
-====== Enable listener endpoint annotations
+====== Enable Listener Endpoint Annotations
 
 To enable support for `@RabbitListener` annotations add `@EnableRabbit` to one of your `@Configuration` classes.
 
@@ -1272,6 +1634,90 @@ If you prefer XML configuration, use the `<rabbit:annotation-driven>` element.
 
 ----
 
+[[async-annotation-conversion]]
+====== Message Conversion for Annotated Methods
+
+There are two conversion steps in the pipeline before invoking the listener.
+The first uses a `MessageConverter` to convert the incoming Spring AMQP `Message` to a _spring-messaging_ `Message`.
+When the target method is invoked, the message payload is converted, if necessary, to the method parameter type.
+
+The default `MessageConverter` for the first step is a Spring AMQP `SimpleMessageConverter` that handles conversion to
+`String` and `java.io.Serializable` objects; all others remain as a `byte[]`.
+In the following discussion, we call this the _message converter_.
+
+The default converter for the second step is a `GenericMessageConverter` which delegates to a conversion service
+(an instance of `DefaultFormattingConversionService`).
+In the following discussion, we call this the _method argument converter_.
+
+To change the _message converter_, simply add it as a property to the container factory bean:
+
+[source, java]
+----
+@Bean
+public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory() {
+    SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+    ...
+    factory.setMessageConverter(new Jackson2JsonMessageConverter());
+    ...
+    return factory;
+}
+----
+
+This configures a Jackson2 converter that expects header information to be present to guide the conversion.
+
+You can also consider a `ContentTypeDelegatingMessageConverter` which can handle conversion of different content types.
+
+In most cases, it is not necessary to customize the _method argument converter_ unless, for example, you want to use
+a custom `ConversionService`.
+
+In versions prior to _1.6_, the type information to convert the JSON had to be provided in message headers, or a
+custom `ClassMapper` was required.
+Starting with _version 1.6_, if there are no type information headers, the type can be inferred from the target
+method arguments.
+
+NOTE: This type inference only works for `@RabbitListener` at the method level.
+
+See <<json-message-converter>> for more information.
+
+
+If you wish to customize the _method argument converter_, you can do so as follows:
+
+[source, java]
+----
+@Configuration
+@EnableRabbit
+public class AppConfig implements RabbitListenerConfigurer {
+
+    ...
+
+    @Bean
+    public DefaultMessageHandlerMethodFactory myHandlerMethodFactory() {
+        DefaultMessageHandlerMethodFactory factory = new DefaultMessageHandlerMethodFactory();
+        factory.setMessageConverter(new GenericMessageConverter(myConversionService()));
+        return factory;
+    }
+
+    @Bean
+    public ConversionService myConversionService() {
+        DefaultConversionService conv = new DefaultConversionService();
+        conv.addConverter(mySpecialConverter());
+        return conv;
+    }
+
+    @Override
+    public void configureRabbitListeners(RabbitListenerEndpointRegistrar registrar) {
+        registrar.setMessageHandlerMethodFactory(myHandlerMethodFactory());
+    }
+
+    ...
+
+}
+----
+
+IMPORTANT: for multi-method listeners (see <<annotation-method-selection>>), the method selection is based on the
+payload of the message *after the message conversion*; the _method argument converter_ is only called after the method has
+been selected.
+
 [[async-annotation-driven-registration]]
 ====== Programmatic Endpoint Registration
 
@@ -1280,8 +1726,6 @@ The infrastructure allows you to configure endpoints programmatically in additio
 
 [source,java]
 ----
-
-
 @Configuration
 @EnableRabbit
 public class AppConfig implements RabbitListenerConfigurer {
@@ -1310,8 +1754,6 @@ Let’s rewrite it to inject the `Order` with a custom header:
 
 [source,java]
 ----
-
-
 @Component
 public class MyService {
 
@@ -1333,6 +1775,8 @@ The `com.rabbitmq.client.Channel` on which the message was received
 The `org.springframework.messaging.Message` representing the incoming AMQP message.
 Note that this message holds both the custom and the standard headers (as defined by `AmqpHeaders`).
 
+NOTE: Starting with _version 1.6_, the inbound `deliveryMode` header is now available in the header with name
+`AmqpHeaders.RECEIVED_DELIVERY_MODE` instead of `AmqpHeaders.DELIVERY_MODE`.
 
 `@Header`-annotated method arguments to extract a specific header value, including standard AMQP headers.
 
@@ -1432,7 +1876,6 @@ Assuming our `processOrder` method should now return an `OrderStatus`, it is pos
 
 [source,java]
 ----
-
 @RabbitListener(destination = "myQueue")
 @SendTo("status")
 public OrderStatus processOrder(Order order) {
@@ -1457,7 +1900,8 @@ public Message<OrderStatus> processOrder(Order order) {
 }
 ----
 
-The `@SendTo` value is assumed as a reply `exchange` and `routingKey` pair following the pattern `exchange/routingKey`, where one of those parts can be omitted.
+The `@SendTo` value is assumed as a reply `exchange` and `routingKey` pair following the pattern `exchange/routingKey`,
+where one of those parts can be omitted.
 The valid values are:
 
 `foo/bar` - the replyTo exchange and routingKey.
@@ -1477,7 +1921,7 @@ Also `@SendTo` can be used without a `value` attribute.
 This case is equal to an empty sendTo pattern.
 `@SendTo` is only used if the inbound message does not have a `replyToAddress` property.
 
-Starting with _version 1.5_, the `@SendTo` value can be a SpEL Expression, for example...
+Starting with _version 1.5_, the `@SendTo` value can be a bean initialization SpEL Expression, for example...
 
 [source, java]
 ----
@@ -1495,35 +1939,67 @@ public String spelReplyTo() {
 
 The expression must evaluate to a `String`, which can be a simple queue name (sent to the default exchange) or with
 the form `exchange/routingKey` as discussed above.
-The expression is evaluated once, during context initialization.
-For dynamic reply routing, the message sender should include a `reply_to` message property.
+
+NOTE: The `#{...}` expression is evaluated once, during initialization.
+
+For dynamic reply routing, the message sender should include a `reply_to` message property or use the alternate
+runtime SpEL expression described below.
+
+Starting with _version 1.6_, the `@SendTo` can be a SpEL expression that is evaluated at runtime against the request
+and reply:
+
+[source, java]
+----
+@RabbitListener(queues = "test.sendTo.spel")
+@SendTo("!{'some.reply.queue.with.' + result.queueName}")
+public Bar capitalizeWithSendToSpel(Foo foo) {
+    return processTheFooAndReturnABar(foo);
+}
+----
+
+The runtime nature of the SpEL expression is indicated with `!{...}` delimiters.
+The evaluation context `#root` object for the expression has three properties:
+
+- `request` - the `o.s.amqp.core.Message` request object.
+- `source` - the `o.s.messaging.Message<?>` after conversion.
+- `result` - the method result.
+
+The context has a map property accessor, a standard type converter and a bean resolver, allowing other beans in the
+context to be referenced (e.g. `@someBeanName.determineReplyQ(request, result)`).
+
+In summary, `#{...}` is evaluated once during initialization, with the `#root` object being the application context;
+beans are referenced by their names.
+`!{...}` is evaluated at runtime for each message with the root object having the properties above and beans are
+referenced with their names, prefixed by `@`.
 
 [[annotation-method-selection]]
 ====== Multi-Method Listeners
 
 Starting with _version 1.5.0_, the `@RabbitListener` annotation can now be specified at the class level.
-Together with the new `@RabbitHandler` annotation, this allows a single listener to invoke different methods, based on the payload type of the incoming message.
+Together with the new `@RabbitHandler` annotation, this allows a single listener to invoke different methods, based on
+the payload type of the incoming message.
 This is best described using an example:
 
 [source, java]
 ----
-@RabbitListener(queues = "someQueue")
+@RabbitListener(id="multi", queues = "someQueue")
 public class MultiListenerBean {
 
-	@RabbitHandler
-	public String bar(Bar bar) {
-		...
-	}
+    @RabbitHandler
+    @SendTo("my.reply.queue")
+    public String bar(Bar bar) {
+        ...
+    }
 
-	@RabbitHandler
-	public String baz(Baz baz) {
-		...
-	}
+    @RabbitHandler
+    public String baz(Baz baz) {
+        ...
+    }
 
-	@RabbitHandler
-	public String qux(@Header("amqp_receivedRoutingKey") String rk, @Payload Qux qux) {
-		...
-	}
+    @RabbitHandler
+    public String qux(@Header("amqp_receivedRoutingKey") String rk, @Payload Qux qux) {
+        ...
+    }
 
 }
 ----
@@ -1533,12 +2009,76 @@ It is important to understand that the system must be able to identify a unique 
 The type is checked for assignability to a single parameter that has no annotations, or is annotated with the `@Payload` annotation.
 Notice that the same method signatures apply as discussed in the method-level `@RabbitListener` described above.
 
+Notice that the `@SendTo` must be specified on each method (if needed); it is not supported at the class level.
+
+[[repeatable-rabbit-listener]]
+====== @Repeatable @RabbitListener
+
+Starting with _version 1.6_, the `@RabbitListener` annotation is marked with `@Repeatable`.
+This means that the annotation can appear on the same annotated element (method or class) multiple times.
+In this case, a separate listener container is created for each annotation, each of which invokes the same listener
+`@Bean`.
+Repeatable annotations can be used with Java 8 or above; when using Java 7 or earlier, the same effect can be achieved
+by using the `@RabbitListeners` "container" annotation, with an array of `@RabbitListener` annotations.
+
+====== Proxy @RabbitListener and Generics
+
+If your service is intended to be proxied (e.g. in case of `@Transactional`) there are some considerations when
+the interface has generic parameters.
+With a generic interface and a particular implementation, e.g.:
+
+[source, java]
+----
+interface TxService<P> {
+
+   String handle(P payload, String header);
+
+}
+
+static class TxServiceImpl implements TxService<Foo> {
+
+    @Override
+    @RabbitListener(...)
+    public String handle(Foo foo, String rk) {
+         ...
+    }
+
+}
+----
+
+you are forced to switch to the CGLIB target class proxy because the actual implementation of the interface
+`handle` method is a bridge method.
+In the case of transaction management, the use of CGLIB is configured using
+an annotation option - `@EnableTransactionManagement(proxyTargetClass = true)`.
+And in this case, all annotations have to be declared on the target method in the implementation:
+
+[source, java]
+----
+static class TxServiceImpl implements TxService<Foo> {
+
+    @Override
+    @Transactional
+    @RabbitListener(...)
+    public String handle(@Payload Foo foo, @Header("amqp_receivedRoutingKey") String rk) {
+        ...
+    }
+
+}
+----
+
+
 ====== Container Management
 
 Containers created for annotations are not registered with the application context.
 You can obtain a collection of all containers by invoking `getListenerContainers()` on the
 `RabbitListenerEndpointRegistry` bean.
-You can then iterate over this collection, for example, to stop/start containers.
+You can then iterate over this collection, for example, to stop/start all containers or invoke the `Lifecycle` methods
+on the registry itself which will invoke the operations on each container.
+
+You can also get a reference to an individual container using its `id`, using `getListenerContainer(String id)`; for
+example `registry.getListenerContainer("multi")` for the container created by the snippet above.
+
+Starting with version _1.5.2_, you can obtain the `id` s of the registered containers with `getListenerContainerIds()`.
 
 Starting with _version 1.5_, you can now assign a `group` to the container on the `RabbitListener` endpoint.
 This provides a mechanism to get a reference to a subset of containers; adding a `group` attribute causes a
@@ -1553,11 +2093,117 @@ Threads from the `TaskExecutor` configured in the `SimpleMessageListener` are us
 If not configured, a `SimpleAsyncTaskExecutor` is used.
 If a pooled executor is used, ensure the pool size is sufficient to handle the configured concurrency.
 
+NOTE: When using the default `SimpleAsyncTaskExecutor`, for the threads the listener is invoked on, the listener
+container `beanName` is used as the `threadNamePrefix`.
+This is useful for log analysis; it's generally recommended to always include the thread name in the logging appender
+configuration.
+When a `TaskExecutor` is specifically provided via the `taskExecutor` property on the `SimpleMessageListenerContainer`,
+it is used as is, without modification.
+It is recommended that you use a similar technique to name the threads created by a custom `TaskExecutor` bean
+definition, to aid with thread identification in log messages.
+
 The `Executor` configured in the `CachingConnectionFactory` is passed into the `RabbitMQ Client` when creating the connection, and its threads are used to deliver new messages to the listener container.
 At the time of writing, if this is not configured, the client uses an internal thread pool executor with a pool size of 5.
 
 The `RabbitMQ client` uses a `ThreadFactory` to create threads for low-level I/O (socket) operations.
 To modify this factory, you need to configure the underlying RabbitMQ `ConnectionFactory`, as discussed in <<connection-factory>>.
+
+[[idle-containers]]
+===== Detecting Idle Asynchronous Consumers
+
+While efficient, one problem with asynchronous consumers is detecting when they are idle - users might want to take
+some action if no messages arrive for some period of time.
+
+Starting with _version 1.6_, it is now possible to configure the listener container to publish a
+`ListenerContainerIdleEvent` when some time passes with no message delivery.
+While the container is idle, an event will be published every `idleEventInterval` milliseconds.
+
+To configure this feature, set the `idleEventInterval` on the container:
+
+====== xml
+
+[source, xml]
+----
+<rabbit:listener-container connection-factory="connectionFactory"
+        ...
+        idle-event-interval="60000"
+        ...
+        >
+    <rabbit:listener id="container1" queue-names="foo" ref="myListener" method="handle" />
+</rabbit:listener-container>
+----
+
+====== Java
+
+[source, java]
+----
+@Bean
+public SimpleMessageListenerContainer(ConnectionFactory connectionFactory) {
+    SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
+    ...
+    container.setIdleEventInterval(60000L);
+    ...
+    return container;
+}
+----
+
+====== @RabbitListener
+
+[source, java]
+----
+@Bean
+public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory() {
+    SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+    factory.setConnectionFactory(rabbitConnectionFactory());
+    factory.setIdleEventInterval(60000L);
+    ...
+    return factory;
+}
+----
+
+In each of these cases, an event will be published once per minute while the container is idle.
+
+====== Event Consumption
+
+You can capture these events by implementing `ApplicationListener` - either a general listener, or one narrowed to only
+receive this specific event.
+You can also use `@EventListener`, introduced in Spring Framework 4.2.
+
+The following example combines the `@RabbitListener` and `@EventListener` into a single class.
+It's important to understand that the application listener will get events for all containers so you may need to
+check the listener id if you want to take specific action based on which container is idle.
+You can also use the `@EventListener` `condition` for this purpose.
+
+The events have 4 properties:
+
+- `source` - the listener container instance
+- `id` - the listener id (or container bean name)
+- `idleTime` - the time the container had been idle when the event was published
+- `queueNames` - the names of the queue(s) that the container listens to
+
+[source, xml]
+----
+public class Listener {
+
+    @RabbitListener(id="foo", queues="#{queue.name}")
+    public String listen(String foo) {
+        return foo.toUpperCase();
+    }
+
+    @EventListener(condition = "event.listenerId == 'foo'")
+    public void onApplicationEvent(ListenerContainerIdleEvent event) {
+        ...
+    }
+
+}
+----
+
+IMPORTANT: Event listeners will see events for all containers; so, in the example above, we narrow the events received
+based on the listener ID.
+
+CAUTION: If you wish to use the idle event to stop the lister container, you should not call `container.stop()` on the
+thread that calls the listener - it will cause delays and unnecessary log messages.
+Instead, you should hand off the event to a different thread that can then stop the container.
 
 [[message-converters]]
 ==== Message Converters
@@ -1638,31 +2284,33 @@ In the next two sections, we'll explore some alternatives for passing rich domai
 
 For all other content-types, the `SimpleMessageConverter` will return the Message body content directly as a byte array.
 
+See <<java-deserialization>> for important information.
+
 ====== Converting To a Message
 
 When converting to a Message from an arbitrary Java Object, the `SimpleMessageConverter` likewise deals with byte arrays, Strings, and Serializable instances.
 It will convert each of these to bytes (in the case of byte arrays, there is nothing to convert), and it will set the content-type property accordingly.
 If the Object to be converted does not match one of those types, the Message body will be null.
 
-===== JsonMessageConverter and Jackson2JsonMessageConverter
+[[serializer-message-converter]]
+===== SerializerMessageConverter
+
+This converter is similar to the `SimpleMessageConverter` except it can be configured with other Spring Framework
+`Serializer` and `Deserializer` implementations for `application/x-java-serialized-object` conversions.
+
+See <<java-deserialization>> for important information.
+
+[[json-message-converter]]
+===== Jackson2JsonMessageConverter
+
+====== Converting to a Message
 
 As mentioned in the previous section, relying on Java serialization is generally not recommended.
-One rather common alternative that is more flexible and portable across different languages and platforms is JSON (JavaScript Object Notation).
-Two implementations are available and can be configured on any `RabbitTemplate` instance to override its usage of the `SimpleMessageConverter` default.
-The `JsonMessageConverter` which uses the `org.codehaus.jackson` 1.x library and `Jackson2JsonMessageConverter` which uses the `com.fasterxml.jackson` 2.x library.
-
-[source,xml]
-----
-<bean class="org.springframework.amqp.rabbit.core.RabbitTemplate">
-    <property name="connectionFactory" ref="rabbitConnectionFactory"/>
-    <property name="messageConverter">
-        <bean class="org.springframework.amqp.support.converter.JsonMessageConverter">
-            <!-- if necessary, override the DefaultClassMapper -->
-            <property name="classMapper" ref="customClassMapper"/>
-        </bean>
-    </property>
-</bean>
-----
+One rather common alternative that is more flexible and portable across different languages and platforms is JSON
+(JavaScript Object Notation).
+The converter can be configured on any `RabbitTemplate` instance to override its usage of the `SimpleMessageConverter`
+default.
+The `Jackson2JsonMessageConverter` uses the `com.fasterxml.jackson` 2.x library.
 
 [source,xml]
 ----
@@ -1677,21 +2325,10 @@ The `JsonMessageConverter` which uses the `org.codehaus.jackson` 1.x library and
 </bean>
 ----
 
-As shown above, the `JsonMessageConverter` and `Jackson2JsonMessageConverter` uses a `DefaultClassMapper` by default.
+As shown above, `Jackson2JsonMessageConverter` uses a `DefaultClassMapper` by default.
 Type information is added to (and retrieved from) the `MessageProperties`.
-If an inbound message does not contain type information in the `MessageProperties`, but you know the expected type, you can configure a static type using the `defaultType` property
-
-[source,xml]
-----
-<bean id="jsonConverterWithDefaultType"
-      class="o.s.amqp.support.converter.JsonMessageConverter">
-    <property name="classMapper">
-        <bean class="org.springframework.amqp.support.converter.DefaultClassMapper">
-            <property name="defaultType" value="foo.PurchaseOrder"/>
-        </bean>
-    </property>
-</bean>
-----
+If an inbound message does not contain type information in the `MessageProperties`, but you know the expected type, you
+can configure a static type using the `defaultType` property
 
 [source,xml]
 ----
@@ -1705,11 +2342,80 @@ If an inbound message does not contain type information in the `MessagePropertie
 </bean>
 ----
 
+====== Converting from a Message
+
+Inbound messages are converted to objects according to the type information added to headers by the sending system.
+
+In versions prior to _1.6_, if type information is not present, conversion would fail.
+Starting with _version 1.6_, if type information is missing, the converter will convert the JSON using Jackson
+defaults (usually a map).
+
+Also, starting with _version 1.6_, when using `@RabbitListener` annotations (on methods), the inferred type information
+is added to the `MessageProperties`; this allows the converter to convert to the argument type of the target method.
+This only applies if there is one parameter with no annotations or a single parameter with the `@Payload` annotation.
+Parameters of type `Message` are ignored during the analysis.
+
+IMPORTANT: By default, the inferred type information will override the inbound `__TypeId__` and related headers created
+by the sending system.
+This allows the receiving system to automatically convert to a different domain object.
+This applies only if the parameter type is concrete (not abstract or an interface) or it is from the `java.util`
+package.
+In all other cases, the `__TypeId__` and related headers will be used.
+There are cases where you might wish to override the default behavior and always use the `__TypeId__` information.
+For example, let's say you have a `@RabbitListener` that takes a `Foo` argument but the message contains a `Bar` which
+is a subclass of `Foo` (which is concrete).
+The inferred type would be incorrect.
+To handle this situation, set the `TypePrecedence` property on the `Jackson2JsonMessageConverter` to `TYPE_ID` instead
+of the default `INFERRED`.
+The property is actually on the converter's `DefaultJackson2JavaTypeMapper` but a setter is provided on the converter
+for convenience.
+If you inject a custom type mapper, you should set the property on the mapper instead.
+
+NOTE: When converting from the `Message`, an incoming `MessageProperties.getContentType()` must be JSON-compliant (the logic `contentType.contains("json")` is used).
+Otherwise, a `WARN` log message `Could not convert incoming message with content-type [...]`, is emitted and `message.getBody()` is returned as is - as a `byte[]``.
+So, to meet the `Jackson2JsonMessageConverter` requirements on the consumer side, the producer must add the `contentType` message property, e.g. as `application/json`, `text/x-json` or simply use the `Jackson2JsonMessageConverter`, which will set the header automatically.
+
+[source, java]
+----
+@RabbitListener
+public void foo(Foo foo) {...}
+
+@RabbitListener
+public void foo(@Payload Foo foo, @Header("amqp_consumerQueue") String queue) {...}
+
+@RabbitListener
+public void foo(Foo foo, o.s.amqp.core.Message message) {...}
+
+@RabbitListener
+public void foo(Foo foo, o.s.messaging.Message<Foo> message) {...}
+
+@RabbitListener
+public void foo(Foo foo, String bar) {...}
+
+@RabbitListener
+public void foo(Foo foo, o.s.messaging.Message<?> message) {...}
+----
+
+In the first four cases above the converter will attempt to convert to the `Foo` type.
+The fifth example is invalid because we can't determine which argument should receive the message payload.
+With the sixth example, the Jackson defaults will apply due to the generic type being a `WildcardType`.
+
+You can, however, create a custom converter and use the `targetMethod` message property to decide which type to convert
+the JSON to.
+
+[NOTE]
+====
+This type inference can only be achieved when the `@RabbitListener` annotation is declared at the method level.
+With class-level `@RabbitListener`, the converted type is used to select which `@RabbitHandler` method to invoke.
+For this reason, the infrastructure provides the `targetObject` message property which can be used by a custom
+converter to determine the type.
+====
+
 ===== MarshallingMessageConverter
 
 Yet another option is the `MarshallingMessageConverter`.
 It delegates to the Spring OXM library's implementations of the `Marshaller` and `Unmarshaller` strategy interfaces.
-You can read more about that library http://static.springsource.org/spring/docs/3.0.x/spring-framework-reference/html/oxm.html[here].
+You can read more about that library http://docs.spring.io/spring/docs/current/spring-framework-reference/html/oxm.html[here].
 In terms of configuration, it's most common to provide the constructor argument only since most implementations of `Marshaller` will also implement `Unmarshaller`.
 
 [source,xml]
@@ -1741,6 +2447,29 @@ By default, it will delegate to a `SimpleMessageConverter` if there is no `conte
 </bean>
 ----
 
+[[java-deserialization]]
+===== Java Deserialization
+
+[IMPORTANT]
+====
+There is a possible vulnerability when deserializing java objects from untrusted sources.
+
+If you accept messages from untrusted sources with a `content-type` `application/x-java-serialized-object`, you should
+consider configuring which packages/classes are allowed to be deserialized.
+This applies to both the `SimpleMessageConverter` and `SerializerMessageConverter` when it is configured to use a
+`DefaultDeserializer` - either implicitly, or via configuration.
+
+By default, the white list is empty, meaning all classes will be deserialized.
+
+You can set a list of patterns, such as `foo.*`, `foo.bar.Baz` or `*.MySafeClass`.
+
+The patterns will be checked in order until a match is found.
+If there is no match, a `SecurityException` is thrown.
+
+Set the patterns using the `whiteListPatterns` property on these converters.
+
+====
+
 [[message-properties-converters]]
 ===== Message Properties Converters
 
@@ -1748,8 +2477,62 @@ The `MessagePropertiesConverter` strategy interface is used to convert between t
 `BasicProperties` and Spring AMQP `MessageProperties`. The default implementation
 (`DefaultMessagePropertiesConverter`) is usually sufficient for most purposes but you can implement your own if needed.
 The default properties converter will convert `BasicProperties` elements of type `LongString` to `String` s
-when the size is not greater than `1024` bytes. Larger `LongString` s are returned as a `DataInputStream.
+when the size is not greater than `1024` bytes. Larger `LongString` s are not converted (see below).
 This limit can be overridden with a constructor argument.
+
+Starting with _version 1.6_, headers longer than the long string limit (default 1024) are now left as
+`LongString` s by default by the `DefaultMessagePropertiesConverter`.
+You can access the contents via the `getBytes[]`, `toString()`, or `getStream()` methods.
+
+Previously, the `DefaultMessagePropertiesConverter` "converted" such headers to a `DataInputStream` (actually it just
+referenced the `LongString`'s `DataInputStream`).
+On output, this header was not converted (except to a String, e.g. `java.io.DataInputStream@1d057a39` by calling
+`toString()` on the stream).
+
+Large incoming `LongString` headers are now correctly "converted" on output too (by default).
+
+A new constructor is provided to allow you to configure the converter to work as before:
+
+[source, java]
+----
+/**
+ * Construct an instance where LongStrings will be returned
+ * unconverted or as a java.io.DataInputStream when longer than this limit.
+ * Use this constructor with 'true' to restore pre-1.6 behavior.
+ * @param longStringLimit the limit.
+ * @param convertLongLongStrings LongString when false,
+ * DataInputStream when true.
+ * @since 1.6
+ */
+public DefaultMessagePropertiesConverter(int longStringLimit, boolean convertLongLongStrings) { ... }
+----
+
+
+Also starting with _version 1.6_, a new property `correlationIdString` has been added to `MessageProperties`.
+Previously, when converting to/from `BasicProperties` used by the RabbitMQ client, an unnecessary `byte[] <-> String`
+conversion was performed because `MessageProperties.correlationId` is a `byte[]` but `BasicProperties` uses a
+`String`. (Ultimately, the RabbitMQ client uses UTF-8 to convert the String to bytes to put in the protocol message).
+
+To provide maximum backwards compatibility, a new property `correlationIdPolicy` has been added to the
+`DefaultMessagePropertiesConverter`.
+This takes an `DefaultMessagePropertiesConverter.CorrelationIdPolicy` enum argument.
+By default it is set to `BYTES` which replicates the previous behavior.
+
+For inbound messages:
+
+- `STRING` - just the `correlationIdString` property is mapped
+- `BYTES` - just the `correlationId` property is mapped
+- `BOTH` - both properties are mapped
+
+For outbound messages:
+
+- `STRING` - just the `correlationIdString` property is mapped
+- `BYTES` - just the `correlationId` property is mapped
+- `BOTH` - Both properties will be considered, with the String property taking precedence
+
+Also starting with _version 1.6_, the inbound `deliveryMode` property is no longer mapped to `MessageProperties.deliveryMode`, it is mapped to `MessageProperties.receivedDeliveryMode` instead.
+Also, the inbound `userId` property is no longer mapped to `MessageProperties.userId`, it is mapped to `MessageProperties.receivedUserId` instead.
+These changes are to avoid unexpected propagation of these properties if the same `MessageProperties` object is used for an outbound message.
 
 [[post-processing]]
 ==== Modifying Messages - Compression and More
@@ -1817,6 +2600,14 @@ When using Direct reply-to, a `reply-listener` is not required and should not be
 
 Reply listeners are still supported with named queues (other than `amq.rabbitmq.reply-to`), allowing control of reply concurrency etc.
 
+Starting with _version 1.6_ if, for some reason, you wish to use a temporary, exclusive, auto-delete queue for each
+reply, set the `useTemporaryReplyQueues` property to `true`.
+This property is ignored if you you set a `replyAddress`.
+
+The decision whether or not to use direct reply-to can be changed to use different criteria by subclassing
+`RabbitTemplate` and overriding `useDirectReplyTo()`.
+The method is called once only; when the first request is sent.
+
 ===== Message Correlation With A Reply Queue
 
 When using a fixed reply queue (other than `amq.rabbitmq.reply-to`), it is necessary to provide correlation data so that replies can be correlated to requests.
@@ -1837,7 +2628,12 @@ However, a single reply queue can be configured on the template, which can be mo
 and also allows you to set arguments on that queue.
 In this case, however, you must also provide a <reply-listener/> sub element.
 This element provides a listener container for the reply queue, with the template being the listener.
-All of the <<containerAttributes>> attributes allowed on a <listener-container/> are allowed on the element, except for connection-factory and message-converter, which are inherited from the template's configuration.
+All of the <<containerAttributes>> attributes allowed on a <listener-container/> are allowed on the element, except for
+connection-factory and message-converter, which are inherited from the template's configuration.
+
+IMPORTANT: If you run multiple instances of your application or use multiple `RabbitTemplate` s, you *MUST* use a
+unique reply queue for each - RabbitMQ has no capability to select messages from a queue so, if they all use the same
+queue, each instance would compete for replies and not necessarily receive their own.
 
 [source,xml]
 ----
@@ -1851,9 +2647,11 @@ All of the <<containerAttributes>> attributes allowed on a <listener-container/>
 
 While the container and template share a connection factory, they do not share a channel and therefore requests and replies are not performed within the same transaction (if transactional).
 
-NOTE: Prior to _version 1.5.0_, the `reply-address` attribute was not available, replies were always routed using the default exchange and the `reply-queue` name as the routing key.
+NOTE: Prior to _version 1.5.0_, the `reply-address` attribute was not available, replies were always routed using the
+default exchange and the `reply-queue` name as the routing key.
 This is still the default but you can now specify the new `reply-address` attribute.
-The `reply-address` can contain an address with the form `<exchange>/<routingKey>` and the reply will be routed to the specified *exchange* and routed to a queue bound with the *routing key*.
+The `reply-address` can contain an address with the form `<exchange>/<routingKey>` and the reply will be routed to the
+specified *exchange* and routed to a queue bound with the *routing key*.
 The `reply-address` has precedence over `reply-queue`. The `<reply-listener>` must be configured as a separate
 `<listener-container>` component, when only `reply-address` is in use, anyway `reply-address` and `reply-queue`
 (or `queues` attribute on the `<listener-container>`) must refer to the same queue logically.
@@ -1938,6 +2736,87 @@ Simply bind a queue to the configured dead letter exchange with a routing key eq
 Refer to the https://www.rabbitmq.com/dlx.html[RabbitMQ Dead Letter Documentation] for more information about configuring dead lettering.
 You can also take a look at the `FixedReplyQueueDeadLetterTests` test case for an example.
 
+[[async-template]]
+===== AsyncRabbitTemplate
+
+_Version 1.6_ introduced the `AsyncRabbitTemplate`.
+This has similar `sendAndReceive` (and `convertSendAndReceive`) methods to those on the link:#amqp-template[AmqpTemplate]
+but instead of blocking, they return a `ListenableFuture`.
+
+The `sendAndReceive` methods return a `RabbitMessageFuture`; the `convertSendAndReceive` methods return a
+`RabbitConverterFuture`.
+
+You can either synchronously retrieve the result later, by invoking `get()` on the future, or you can register a
+callback which will be called asynchronously with the result.
+
+[source, java]
+----
+@Autowired
+private AsyncRabbitTemplate template;
+
+...
+
+public void doSomeWorkAndGetResultLater() {
+
+    ...
+
+    ListenableFuture<String> future = this.template.convertSendAndReceive("foo");
+
+    // do some more work
+
+    String reply = null;
+    try {
+        reply = future.get();
+    }
+    catch (ExecutionException e) {
+        ...
+    }
+
+    ...
+
+}
+
+public void doSomeWorkAndGetResultAsync() {
+
+    ...
+
+    RabbitConverterFuture<String> future = this.template.convertSendAndReceive("foo");
+    future.addCallback(new ListenableFutureCallback<String>() {
+
+        @Override
+        public void onSuccess(String result) {
+            ...
+        }
+
+        @Override
+        public void onFailure(Throwable ex) {
+            ...
+        }
+
+    });
+
+    ...
+
+}
+----
+
+If `mandatory` is set, and the message can't be delivered, the future will throw an `ExecutionException` with a cause of
+`AmqpMessageReturnedException` which encapsulates the returned message and information about the return.
+
+If `enableConfirms` is set, the future will have a property `confirm` which is itself a `ListenableFuture<Boolean>`
+with `true` indicating a successful publish.
+If the confirm future is false, the `RabbitFuture` will have a further property `nackCause` - the reason for the
+failure, if available.
+
+IMPORTANT: The publisher confirm is discarded if it is received after the reply - since the reply implies a successful
+publish.
+
+Set the `receiveTimeout` property on the template to time out replies (it defaults to `30000` - 30 seconds).
+If a timeout occurs, the future will be completed with an `AmqpReplyTimeoutException`.
+
+The template implements `SmartLifecycle`; stopping the template while there are pending replies will cause the
+pending `Future` s to be canceled.
+
 [[remoting]]
 ===== Spring Remoting with AMQP
 
@@ -1948,7 +2827,7 @@ On the client side, a `RabbitTemplate` is used as described above; on the server
 
 The client factory bean can be injected into any bean (using its `serviceInterface`); the client can then invoke methods on the proxy, resulting in remote execution over AMQP.
 
-NOTE: With the default `MessageConverter` s, the method paramters and returned value must be instances of `Serializable`.
+NOTE: With the default `MessageConverter` s, the method parameters and returned value must be instances of `Serializable`.
 
 On the server side, the `AmqpInvokerServiceExporter` has both `AmqpTemplate` and `MessageConverter` properties.
 Currently, the template's `MessageConverter` is not used.
@@ -2010,7 +2889,7 @@ If the message has no `replyToAddress` property, the message will be rejected an
 NOTE: By default, if the request message cannot be delivered, the calling thread will eventually timeout and a
 `RemoteProxyFailureException` will be thrown.
 The timeout is 5 seconds by default, and can be modified by setting the `replyTimeout` property on the
-`RabbbitTemplate`.
+`RabbitTemplate`.
 Starting with _version 1.5_, setting the `mandatory` property to true, and enabling returns on the connection
 factory (see <<cf-pub-conf-ret>>), the calling thread will throw an `AmqpMessageReturnedException`.
 See <<reply-timeout>> for more information.
@@ -2064,19 +2943,25 @@ The keys for the properties returned are available as constants in the `RabbitTe
 `QUEUE_MESSAGE_COUNT`, `QUEUE_CONSUMER_COUNT`).
 The <<management-template, RabbitMQ REST API>> provides much more information in the `QueueInfo` object.
 
-The no-arg declareQueue() method defines a queue on the broker whose name is automatically generated.
+The no-arg `declareQueue()` method defines a queue on the broker with a name that is automatically generated.
 The additional properties of this auto-generated queue are `exclusive=true`, `autoDelete=true`, and `durable=false`.
 
 The `declareQueue(Queue queue)` method takes a `Queue` object and returns the name of the declared queue.
-This is useful if you wish the broker to generate the queue's name.
-This is in contrast to an `AnonymousQueue` where the framework generates a unique (`UUID`) name and sets `durable` to `false` and `exlusive, autoDelete` to `true`.
-If the provided `Queue`'s `name` property is an empty String, the Broker declares the queue with a generated name and that name is returned to the caller.
+If the provided `Queue`'s `name` property is an empty String, the broker declares the queue with a generated name and
+that name is returned to the caller.
 The `Queue` object itself is not changed.
 This functionality can only be used programmatically by invoking the `RabbitAdmin` directly.
 It is not supported for auto-declaration by the admin by defining a queue declaratively in the application context.
-A `<rabbit:queue/>` with an empty, or missing, `name` will always create an `AnonymousQueue`.
-This is because the name will change if redeclared due to a connection failure.
-Declarative queues must have fixed names because they might be referenced elsewhere in the context, for example, in a listener:
+
+This is in contrast to an `AnonymousQueue` where the framework generates a unique (`UUID`) name and sets `durable` to
+`false` and `exclusive`, `autoDelete` to `true`.
+A `<rabbit:queue/>` with an empty, or missing, `name` attribute will always create an `AnonymousQueue`.
+
+See <<anonymous-queue>> to understand why `AnonymousQueue` is preferred over broker-generated queue names, as well as
+how to control the format of the name.
+Declarative queues must have fixed names because they might be referenced elsewhere in the context, for example, in a
+listener:
+
 [source,xml]
 ----
 <rabbit:listener-container>
@@ -2096,7 +2981,7 @@ The RabbitMQ implementation of this interface is RabbitAdmin which when configur
 ----
 
 When the `CachingConnectionFactory` cache mode is `CHANNEL` (the default), the `RabbitAdmin` implementation does automatic lazy declaration of `Queues`, `Exchanges` and `Bindings` declared in the same `ApplicationContext`.
-These components will be declared as son as a `Connection` is opened to the broker.
+These components will be declared as s0on as a `Connection` is opened to the broker.
 There are some namespace features that make this very convenient, e.g.
 in the Stocks sample application we have:
 
@@ -2135,7 +3020,7 @@ This allows you to refer to the queue (for example in a binding) by an id that i
 It also allows standard Spring features such as property placeholders, and SpEL expressions for the queue name; these features are not available when using the name as the bean identifier.
 
 Queues can be configured with additional arguments, for example, 'x-message-ttl' or 'x-ha-policy'.
-Using the namespace support, they are provided in the form of a Map of argument name/argument value pairs, using the <rabbit:queue-arguments> element.
+Using the namespace support, they are provided in the form of a Map of argument name/argument value pairs, using the `<rabbit:queue-arguments>` element.
 
 [source,xml]
 ----
@@ -2189,29 +3074,48 @@ For example, if a `queue` already exists with no `time to live` argument, and yo
 
 By default, the `RabbitAdmin` will immediately stop processing all declarations when any exception occurs; this could cause downstream issues - such as a *listener container* failing to initialize because another queue (defined after the one in error) is not declared.
 
-This behavior can be modified by setting the `ignore-declaration-failures` attribute to `true` on the `RabbitAdmin`.
+This behavior can be modified by setting the `ignore-declaration-exceptions` attribute to `true` on the `RabbitAdmin`.
 This option instructs the `RabbitAdmin` to log the exception, and continue declaring other elements.
+When configuring the `RabbitAdmin` using java, this property is `ignoreDeclarationExceptions`.
+This is a global setting which applies to all elements, queues, exchanges and bindings have a similar property which
+applies to just those elements.
+
+Prior to _version 1.6_, this property only took effect if an `IOException` occurred on the channel - such as when there
+is a mismatch between current and desired properties.
+Now, this property takes effect on any exception, including `TimeoutException` etc.
+
+In addition, any declaration exceptions result in the publishing of a `DeclarationExceptionEvent`, which is an
+`ApplicationEvent` that can be consumed by any `ApplicationListener` in the context.
+The event contains a reference to the admin, the element that was being declared, and the `Throwable`.
 
 [[headers-exchange]]
-Starting with _version 1.3_ the HeadersExchange can be configured to match on multiple headers; you can also specify whether any or all headers must match:
+Starting with _version 1.3_ the `HeadersExchange` can be configured to match on multiple headers; you can also specify whether any or all headers must match:
 
 [source,xml]
 ----
 <rabbit:headers-exchange name="headers-test">
-	<rabbit:bindings>
-		<rabbit:binding queue="bucket">
-			<rabbit:binding-arguments>
-				<entry key="foo" value="bar"/>
-				<entry key="baz" value="qux"/>
-				<entry key="x-match" value="all"/>
-			</rabbit:binding-arguments>
-		</rabbit:binding>
-	</rabbit:bindings>
+    <rabbit:bindings>
+        <rabbit:binding queue="bucket">
+            <rabbit:binding-arguments>
+                <entry key="foo" value="bar"/>
+                <entry key="baz" value="qux"/>
+                <entry key="x-match" value="all"/>
+            </rabbit:binding-arguments>
+        </rabbit:binding>
+    </rabbit:bindings>
 </rabbit:headers-exchange>
 ----
 
-To see how to use Java to configure the AMQP infrastructure, look at the Stock sample application, where there is the `@Configuration` class `AbstractStockRabbitConfiguration` which in turn has RabbitClientConfiguration and RabbitServerConfiguration subclasses.
-The code for AbstractStockRabbitConfiguration is shown below
+Starting with _version 1.6_ `Exchanges` can be configured with an `internal` flag (defaults to `false`) and such an
+`Exchange` will be properly configured on the Broker via a `RabbitAdmin` (if one is present in the application context).
+If the `internal` flag is `true` for an exchange, RabbitMQ will not allow clients to use the exchange.
+This is useful for a dead letter exchange, or exchange-to-exchange binding, where you don't wish the exchange to be used
+directly by publishers.
+
+To see how to use Java to configure the AMQP infrastructure, look at the Stock sample application,
+where there is the `@Configuration` class `AbstractStockRabbitConfiguration` which in turn has
+`RabbitClientConfiguration` and `RabbitServerConfiguration` subclasses.
+The code for `AbstractStockRabbitConfiguration` is shown below
 
 [source,java]
 ----
@@ -2264,12 +3168,12 @@ public class RabbitServerConfiguration extends AbstractStockAppRabbitConfigurati
 }
 ----
 
-This is the end of the whole inheritance chain of @Configuration classes.
+This is the end of the whole inheritance chain of `@Configuration` classes.
 The end result is the the TopicExchange and Queue will be declared to the broker upon application startup.
 There is no binding of the TopicExchange to a queue in the server configuration, as that is done in the client application.
 The stock request queue however is automatically bound to the AMQP default exchange - this behavior is defined by the specification.
 
-The client @Configuration class is a little more interesting and is shown below.
+The client `@Configuration` class is a little more interesting and is shown below.
 
 [source,java]
 ----
@@ -2286,7 +3190,7 @@ public class RabbitClientConfiguration extends AbstractStockAppRabbitConfigurati
 
     /**
      * Binds to the market data exchange.
-Interested in any stock quotes
+     * Interested in any stock quotes
      * that match its routing key.
      */
     @Bean
@@ -2300,7 +3204,36 @@ Interested in any stock quotes
 }
 ----
 
-The client is declaring another queue via the declareQueue() method on the AmqpAdmin, and it binds that queue to the market data exchange with a routing pattern that is externalized in a properties file.
+The client is declaring another queue via the `declareQueue()` method on the `AmqpAdmin`, and it binds that queue to the market data exchange with a routing pattern that is externalized in a properties file.
+
+
+[[builder-api]]
+===== Builder API for Queues and Exchanges
+
+_Version 1.6_ introduces a convenient fluent API for configuring `Queue` and `Exchange` objects when using Java configuration:
+
+[source, java]
+----
+@Bean
+public Queue queue() {
+    return QueueBuilder.nonDurable("foo")
+        .autoDelete()
+        .exclusive()
+        .withArgument("foo", "bar")
+        .build();
+}
+
+@Bean
+public Exchange exchange() {
+  return ExchangeBuilder.directExchange("foo")
+      .autoDelete()
+      .internal()
+      .withArgument("foo", "bar")
+      .build();
+}
+----
+
+See the javadocs for `org.springframework.amqp.core.QueueBuilder` and `org.springframework.amqp.core.ExchangeBuilder` for more information.
 
 [[collection-declaration]]
 ===== Declaring Collections of Exchanges, Queues, Bindings
@@ -2421,39 +3354,162 @@ In this example, the components will be declared by `admin1` but not `admin2`:
 ----
 @Bean
 public RabbitAdmin admin() {
-	RabbitAdmin rabbitAdmin = new RabbitAdmin(cf1());
-	rabbitAdmin.afterPropertiesSet();
-	return rabbitAdmin;
+    RabbitAdmin rabbitAdmin = new RabbitAdmin(cf1());
+    rabbitAdmin.afterPropertiesSet();
+    return rabbitAdmin;
 }
 
 @Bean
 public RabbitAdmin admin2() {
-	RabbitAdmin rabbitAdmin = new RabbitAdmin(cf2());
-	rabbitAdmin.afterPropertiesSet();
-	return rabbitAdmin;
+    RabbitAdmin rabbitAdmin = new RabbitAdmin(cf2());
+    rabbitAdmin.afterPropertiesSet();
+    return rabbitAdmin;
 }
 
 @Bean
 public Queue queue() {
-	Queue queue = new Queue("foo");
-	queue.setAdminsThatShouldDeclare(admin());
-	return queue;
+    Queue queue = new Queue("foo");
+    queue.setAdminsThatShouldDeclare(admin());
+    return queue;
 }
 
 @Bean
 public Exchange exchange() {
-	DirectExchange exchange = new DirectExchange("bar");
-	exchange.setAdminsThatShouldDeclare(admin());
-	return exchange;
+    DirectExchange exchange = new DirectExchange("bar");
+    exchange.setAdminsThatShouldDeclare(admin());
+    return exchange;
 }
 
 @Bean
 public Binding binding() {
-	Binding binding = new Binding("foo", DestinationType.QUEUE, exchange().getName(), "foo", null);
-	binding.setAdminsThatShouldDeclare(admin());
-	return binding;
+    Binding binding = new Binding("foo", DestinationType.QUEUE, exchange().getName(), "foo", null);
+    binding.setAdminsThatShouldDeclare(admin());
+    return binding;
 }
 ----
+
+[[anonymous-queue]]
+===== AnonymousQueue
+
+In general, when needing a uniquely-named, exclusive, auto-delete queue, it is recommended that the `AnonymousQueue` is
+used instead of broker-defined queue names (using `""` as a `Queue` name will cause the broker to generate the queue
+name).
+
+This is because:
+
+1. The queues are actually declared when the connection to the broker is established; this is long after the beans are
+created and wired together; beans using the queue need to know its name.
+In fact, the broker might not even be running when the app is started.
+2. If the connection to the broker is lost for some reason, the admin will re-declare the `AnonymousQueue` with the same
+name.
+If we used broker-declared queues, the queue name would change.
+
+Starting with _version 1.5.3_, you can control the format of the queue name used by `AnonymousQueue` s.
+
+By default, the queue name is the String representation of a `UUID`; for example:
+`07afcfe9-fe77-4983-8645-0061ec61a47a`.
+
+You can now provide an `AnonymousQueue.NamingStrategy` implementation in a constructor argument:
+
+[source, java]
+----
+@Bean
+public Queue anon1() {
+    return new AnonymousQueue(new AnonymousQueue.Base64UrlNamingStrategy());
+}
+
+@Bean
+public Queue anon2() {
+    return new AnonymousQueue(new AnonymousQueue.Base64UrlNamingStrategy("foo-"));
+}
+----
+
+The first will generate a queue name prefixed by `spring.gen-` followed by a base64 representation of the `UUID`, for
+example: `spring.gen-MRBv9sqISkuCiPfOYfpo4g`.
+The second will generate a queue name prefixed by `foo-` followed by a base64 representation of the `UUID`.
+
+The base64 encoding uses the "URL and Filename Safe Alphabet" from RFC 4648; trailing padding characters (`=`) are
+removed.
+
+You can provide your own naming strategy, whereby you can include other information (e.g. application, client host) in
+the queue name.
+
+Starting with _version 1.6_, the naming strategy can be specified when using XML configuration;
+the `naming-strategy` attribute is present on the `<rabbit:queue>` element
+for a bean reference that implements `AnonymousQueue.NamingStrategy`.
+
+[source, xml]
+----
+<rabbit:queue id="uuidAnon" />
+
+<rabbit:queue id="springAnon" naming-strategy="springNamer" />
+
+<rabbit:queue id="customAnon" naming-strategy="customNamer" />
+
+<bean id="springNamer" class="org.springframework.amqp.core.AnonymousQueue.Base64UrlNamingStrategy" />
+
+<bean id="customNamer" class="org.springframework.amqp.core.AnonymousQueue.Base64UrlNamingStrategy">
+    <constructor-arg value="custom.gen-" />
+</bean>
+----
+
+The first creates names with a String representation of a UUID.
+The second creates names like `spring.gen-MRBv9sqISkuCiPfOYfpo4g`.
+The third creates names like `custom.gen-MRBv9sqISkuCiPfOYfpo4g`.
+
+Of course, you can provide your own naming strategy bean.
+
+[[delayed-message-exchange]]
+==== Delayed Message Exchange
+
+_Version 1.6_ introduces support for the
+https://www.rabbitmq.com/blog/2015/04/16/scheduling-messages-with-rabbitmq/[Delayed Message Exchange Plugin]
+
+NOTE: The plugin is currently marked as experimental but has been available for over a year (at the time of writing).
+If changes to the plugin make it necessary, we will add support for such changes as soon as practical.
+For that reason, this support in Spring AMQP should be considered experimental, too.
+This functionality was tested with RabbitMQ 3.6.0 and version 0.0.1 of the plugin.
+
+To use a `RabbitAdmin` to declare an exchange as delayed, simply set the `delayed` property on the exchange bean to
+true.
+The `RabbitAdmin` will use the exchange type (`Direct`, `Fanout` etc) to set the `x-delayed-type` argument and
+declare the exchange with type `x-delayed-message`.
+
+The `delayed` property (default `false`) is also available when configuring exchange beans using XML.
+
+[source, xml]
+----
+<rabbit:topic-exchange name="topic" delayed="true" />
+----
+
+To send a delayed message, it's simply a matter of setting the `x-delay` header, via the `MessageProperties`:
+
+[source, java]
+----
+MessageProperties properties = new MessageProperties();
+properties.setXDelay(15000);
+template.send(exchange, routingKey,
+        MessageBuilder.withBody("foo".getBytes()).andProperties(properties).build());
+----
+
+or
+
+[source, java]
+----
+rabbitTemplate.convertAndSend(exchange, routingKey, "foo", new MessagePostProcessor() {
+
+    @Override
+    public Message postProcessMessage(Message message) throws AmqpException {
+        message.getMessageProperties().setXDelay(15000);
+        return message;
+    }
+
+});
+----
+
+To check if a message was delayed, use the `getReceivedDelay()` method on the `MessageProperties`.
+It is a separate property to avoid unintended propagation to an output message generated from an input message.
+
 
 [[management-template]]
 ==== RabbitMQ REST API
@@ -2469,47 +3525,47 @@ The following operations are available on the `RabbitManagementTemplate`:
 ----
 public interface AmqpManagementOperations {
 
-	void addExchange(Exchange exchange);
+    void addExchange(Exchange exchange);
 
-	void addExchange(String vhost, Exchange exchange);
+    void addExchange(String vhost, Exchange exchange);
 
-	void purgeQueue(Queue queue);
+    void purgeQueue(Queue queue);
 
-	void purgeQueue(String vhost, Queue queue);
+    void purgeQueue(String vhost, Queue queue);
 
-	void deleteQueue(Queue queue);
+    void deleteQueue(Queue queue);
 
-	void deleteQueue(String vhost, Queue queue);
+    void deleteQueue(String vhost, Queue queue);
 
-	Queue getQueue(String name);
+    Queue getQueue(String name);
 
-	Queue getQueue(String vhost, String name);
+    Queue getQueue(String vhost, String name);
 
-	List<Queue> getQueues();
+    List<Queue> getQueues();
 
-	List<Queue> getQueues(String vhost);
+    List<Queue> getQueues(String vhost);
 
-	void addQueue(Queue queue);
+    void addQueue(Queue queue);
 
-	void addQueue(String vhost, Queue queue);
+    void addQueue(String vhost, Queue queue);
 
-	void deleteExchange(Exchange exchange);
+    void deleteExchange(Exchange exchange);
 
-	void deleteExchange(String vhost, Exchange exchange);
+    void deleteExchange(String vhost, Exchange exchange);
 
-	Exchange getExchange(String name);
+    Exchange getExchange(String name);
 
-	Exchange getExchange(String vhost, String name);
+    Exchange getExchange(String vhost, String name);
 
-	List<Exchange> getExchanges();
+    List<Exchange> getExchanges();
 
-	List<Exchange> getExchanges(String vhost);
+    List<Exchange> getExchanges(String vhost);
 
-	List<Binding> getBindings();
+    List<Binding> getBindings();
 
-	List<Binding> getBindings(String vhost);
+    List<Binding> getBindings(String vhost);
 
-	List<Binding> getBindingsForExchange(String vhost, String exchange);
+    List<Binding> getBindingsForExchange(String vhost, String exchange);
 
 }
 ----
@@ -2524,21 +3580,46 @@ For example, there are a lot of cases where IOExceptions may be thrown.
 The RabbitTemplate, SimpleMessageListenerContainer, and other Spring AMQP components will catch those Exceptions and convert into one of the Exceptions within our runtime hierarchy.
 Those are defined in the 'org.springframework.amqp' package, and AmqpException is the base of the hierarchy.
 
-When a listener throws an exception, it is wrapped in a `ListenerExecutionFailedException` and, normally the message is rejected and requeued by the broker.
+When a listener throws an exception, it is wrapped in a `ListenerExecutionFailedException` and, normally the message is
+rejected and requeued by the broker.
 Setting `defaultRequeueRejected` to false will cause messages to be discarded (or routed to a dead letter exchange).
-As discussed in <<async-listeners>>, the listener can throw an `AmqpRejectAndDontRequeueException` to conditionally control this behavior.
+As discussed in <<async-listeners>>, the listener can throw an `AmqpRejectAndDontRequeueException` to conditionally
+control this behavior.
 
 However, there is a class of errors where the listener cannot control the behavior.
-When a message that cannot be converted is encountered (for example an invalid `content_encoding` header), the `MessageConversionException` is thrown before the message reaches user code.
+When a message that cannot be converted is encountered (for example an invalid `content_encoding` header), some
+exceptions are thrown before the message reaches user code.
 With `defaultRequeueRejected` set to `true` (default), such messages would be redelivered over and over.
-Before _version 1.3.2_, users needed to write a custom `ErrorHandler`, as discussed in <<exception-handling>> to avoid this situation.
+Before _version 1.3.2_, users needed to write a custom `ErrorHandler`, as discussed in <<exception-handling>> to avoid
+this situation.
 
-Starting with _version 1.3.2_, the default `ErrorHandler` is now a `ConditionalRejectingErrorHandler` which will reject (and not requeue) messages that fail with a `MessageConversionException`.
-An instance of this error handler can be configured with a `FatalExceptionStrategy` so users can provide their own rules for conditional message rejection, e.g.
+Starting with _version 1.3.2_, the default `ErrorHandler` is now a `ConditionalRejectingErrorHandler` which will reject
+(and not requeue) messages that fail with an irrecoverable error:
+
+- `o.s.amqp...MessageConversionException`
+- `o.s.messaging...MessageConversionException`
+- `o.s.messaging...MethodArgumentNotValidException`
+- `o.s.messaging...MethodArgumentTypeMismatchException`
+- `java.lang.NoSuchMethodException`
+- `java.lang.ClassCastException`
+
+The first can be thrown when converting the incoming message payload using a `MessageConverter`.
+The second may be thrown by the conversion service if additional conversion is required when mapping to a
+`@RabbitListener` method.
+The third may be thrown if validation (e.g. `@Valid`) is used in the listener and the validation fails.
+The fourth may be thrown if the inbound message was converted to a type that is not correct for the target method.
+For example, the parameter is declared as `Message<Foo>` but `Message<Bar>` is received.
+
+The fifth and sixth were added in _version 1.6.3_.
+
+An instance of this error handler can be configured with a `FatalExceptionStrategy` so users can provide their own rules
+for conditional message rejection, e.g.
 a delegate implementation to the `BinaryExceptionClassifier` from Spring Retry (<<async-listeners>>).
 In addition, the `ListenerExecutionFailedException` now has a `failedMessage` property which can be used in the decision.
 If the `FatalExceptionStrategy.isFatal()` method returns `true`, the error handler throws an `AmqpRejectAndDontRequeueException`.
-The default `FatalExceptionStrategy` logs a warning message.
+The default `FatalExceptionStrategy` logs a warning message when an exception is determined to be fatal.
+
+Since _version 1.6.3_ a convenient way to add user exceptions to the fatal list is to subclass `ConditionalRejectingErrorHandler.DefaultExceptionStrategy` and override the method `isUserCauseFatal(Throwable cause)` to return true for fatal exceptions.
 
 ==== Transactions
 
@@ -2650,9 +3731,7 @@ There are quite a few options for configuring a `SimpleMessageListenerContainer`
 
 The table below shows the container property names and their equivalent attribute names (in parentheses) when using the namespace to configure a `<rabbit:listener-container/>`.
 
-Some
-    properties are not exposed by the namespace; indicated by `N/A`for
-    the attribute.
+Some properties are not exposed by the namespace; indicated by `N/A` for the attribute.
 
 .Configuration options for a message listener container
 [cols="2l,4", options="header"]
@@ -2802,7 +3881,7 @@ Default 10.
 | connectionFactory
 (connection-factory)
 
-| A reference to the connectionFactory; when configuring using the XML namespace, the default referenced bean name is "rabbitConnectionFactory".
+| A reference to the `ConnectionFactory`; when configuring using the XML namespace, the default referenced bean name is "rabbitConnectionFactory".
 
 | defaultRequeueRejected
 (requeue-rejected)
@@ -2845,7 +3924,7 @@ Defaults to a `RabbitAdmin` that will declare all non-conditional elements.
 | missingQueuesFatal
 (missing-queues-fatal)
 
-| Starting with _version 1.3.5_, `SimpleMessageListenerContainer` has this new property.
+a| Starting with _version 1.3.5_, `SimpleMessageListenerContainer` has this new property.
 
 When set to `true` (default), if none of the configured queues are available on the broker, it is considered fatal.
 This causes the application context to fail to initialize during startup; also, when the queues are deleted while the container is running, by default, the consumers make 3 retries to connect to the queues (at 5 second intervals) and stop the container if these attempts fail.
@@ -2870,14 +3949,45 @@ This global property will not be applied to any containers that have an explicit
 
 The default retry properties (3 retries at 5 second intervals) can be overridden using the properties below.
 
+| mismatchedQueuesFatal
+(mismatched-queues-fatal)
+
+a| This was added in _version 1.6_.
+When the container starts, if this property is true (default: false), the container checks that all queues declared in
+the context are compatible with queues already on the broker.
+If mismatched properties (e.g. `auto-delete`) or arguments (e.g. `x-message-ttl`) exist, the container
+(and application context) will fail to start with a fatal exception.
+
+If the problem is detected during recovery (e.g. after a lost connection), the container will be stopped.
+
+There must be a single `RabbitAdmin` in the application context (or one specifically configured on the container
+using the `rabbitAdmin` property); otherwise this property must be `false`.
+
+NOTE: If the broker is not available during initial startup, the container will start and the conditions will be
+checked when the connection is established.
+
+IMPORTANT: the check is done against all queues in the context, not just the queues that a particular listener
+is configured to use.
+If you wish to limit the checks to just those queues used by a container, you should configure a separate
+`RabbitAdmin` for the container, and provide a reference to it using the `rabbitAdmin` property.
+See <<conditional-declaration>> for more information.
+
 | autoDeclare
 (auto-declare)
 
-| Starting with _version 1.4_, `SimpleMessageListenerContainer` has this new property.
+a| Starting with _version 1.4_, `SimpleMessageListenerContainer` has this new property.
 
-When set to `true` (default), the container will redeclare all AMQP objects (Queues, Exchanges, Bindings), if it detects that at least one of its queues is missing during startup, perhaps because it's an `auto-delete` or an expired queue, but the redeclaration will proceed if the queue is missing for any reason.
+When set to `true` (default), the container will use a `RabbitAdmin` to redeclare all AMQP objects (Queues, Exchanges,
+Bindings), if it detects that at least one of its queues is missing during startup, perhaps because it's an
+`auto-delete` or an expired queue, but the redeclaration will proceed if the queue is missing for any reason.
 To disable this behavior, set this property to `false`.
 Note that the container will fail to start if all of its queues are missing.
+
+NOTE: Prior to _version 1.6_, if there was more than one admin in the context, the container would randomly select one.
+If there were no admins, it would create one internally.
+In either case, this could cause unexpected results.
+Starting with _version 1.6_, for `autoDeclare` to work, there must be exactly one `RabbitAdmin` in the context, or
+a reference to a specific instance must be configured on the container using the `rabbitAdmin` property.
 
 | declarationRetries
 (declaration-retries)
@@ -2923,6 +4033,12 @@ The namespace attribute is available in _version 1.5.x_
 
 Previously, only broker-generated consumer tags can be used; while this is still the default, you can now provide
 an implementation of <<consumerTags, ConsumerTagStrategy>>, enabling the creation of a (unique) tag for each consumer.
+
+| idleEventInterval
+(idle-event-integer)
+
+| Starting with _version 1.6_, `SimpleMessageListenerContainer` has this new property.
+See <<idle-containers>>.
 
 |===
 
@@ -3008,7 +4124,7 @@ NOTE: Queues declared this way must have fixed names; either explicitly declared
 Anonymous queues are non-durable, exclusive, and auto-delete.
 
 IMPORTANT: Automatic declaration is only performed when the `CachingConnectionFactory` cache mode is `CHANNEL` (the default).
-This limitation exists because exlusive and auto-delete queues are bound to the connection.
+This limitation exists because exclusive and auto-delete queues are bound to the connection.
 
 [[retry]]
 ===== Failures in Synchronous Operations and Options for Retry
@@ -3067,18 +4183,23 @@ The `MessageRecover` is called when all retries have been exhausted.
 The default `MessageRecoverer` simply consumes the errant message and emits a WARN message.
 In which case, the message is ACK'd and won't be sent to the Dead Letter Exchange, if any.
 
-Starting with _version 1.3_, a new `RepublishMessageRecoverer` is provided, to allow publishing of failed messages after retries are exhausted:
+Starting with _version 1.3_, a new `RepublishMessageRecoverer` is provided, to allow publishing of failed messages after
+retries are exhausted:
 
 [source,java]
 ----
 @Bean
 RetryOperationsInterceptor interceptor() {
 	return RetryInterceptorBuilder.stateless()
-			.withMaxAttempts(5)
-			.setRecoverer(new RepublishMessageRecoverer(amqpTemplate(), "bar", "baz"))
+			.maxAttempts(5)
+			.recoverer(new RepublishMessageRecoverer(amqpTemplate(), "bar", "baz"))
 			.build();
 }
 ----
+
+The `RepublishMessageRecoverer` publishes the message with additional information in message headers, such as the
+exception message, stack trace, original exchange and routing key.
+Additional headers can be added by creating a subclass and overriding `additionalHeaders()`.
 
 ===== Exception Classification for Retry
 

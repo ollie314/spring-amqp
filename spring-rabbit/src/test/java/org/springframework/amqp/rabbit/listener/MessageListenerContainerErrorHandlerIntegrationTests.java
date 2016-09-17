@@ -1,15 +1,19 @@
 /*
- * Copyright 2010-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener;
 
 import static org.junit.Assert.assertEquals;
@@ -21,13 +25,12 @@ import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.contains;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -39,8 +42,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.core.AcknowledgeMode;
@@ -51,6 +52,7 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.MessageListener;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.core.ChannelAwareMessageListener;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
@@ -90,13 +92,9 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 
 	@Before
 	public void setUp() {
-		doAnswer(new Answer<Void>() {
-
-			@Override
-			public Void answer(InvocationOnMock invocation) throws Throwable {
-				errorsHandled.countDown();
-				return null;
-			}
+		doAnswer(invocation -> {
+			errorsHandled.countDown();
+			return null;
 		}).when(errorHandler).handleError(any(Throwable.class));
 	}
 
@@ -113,39 +111,31 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 		final CountDownLatch messageReceived = new CountDownLatch(1);
 		final CountDownLatch spiedQLogger = new CountDownLatch(1);
 		final CountDownLatch errorHandled = new CountDownLatch(1);
-		container.setErrorHandler(new ErrorHandler() {
-
-			@Override
-			public void handleError(Throwable t) {
-				errorHandled.countDown();
-				throw new AmqpRejectAndDontRequeueException("foo", t);
-			}
+		container.setErrorHandler(t -> {
+			errorHandled.countDown();
+			throw new AmqpRejectAndDontRequeueException("foo", t);
 		});
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				try {
-					messageReceived.countDown();
-					spiedQLogger.await(10, TimeUnit.SECONDS);
-				}
-				catch (InterruptedException e) {
-					Thread.currentThread().interrupt();
-				}
-				throw new RuntimeException("bar");
+		container.setMessageListener((MessageListener) message -> {
+			try {
+				messageReceived.countDown();
+				spiedQLogger.await(10, TimeUnit.SECONDS);
 			}
+			catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			throw new RuntimeException("bar");
 		});
 		container.start();
 		Log logger = spy(TestUtils.getPropertyValue(container, "logger", Log.class));
+		doReturn(true).when(logger).isWarnEnabled();
 		new DirectFieldAccessor(container).setPropertyValue("logger", logger);
-		when(logger.isWarnEnabled()).thenReturn(true);
 		template.convertAndSend(queue.getName(), "baz");
 		assertTrue(messageReceived.await(10, TimeUnit.SECONDS));
 		Object consumer = TestUtils.getPropertyValue(container, "consumers", Map.class)
 				.keySet().iterator().next();
 		Log qLogger = spy(TestUtils.getPropertyValue(consumer, "logger", Log.class));
+		doReturn(true).when(qLogger).isDebugEnabled();
 		new DirectFieldAccessor(consumer).setPropertyValue("logger", qLogger);
-		when(qLogger.isDebugEnabled()).thenReturn(true);
 		spiedQLogger.countDown();
 		assertTrue(errorHandled.await(10, TimeUnit.SECONDS));
 		container.stop();
@@ -211,9 +201,10 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 		container.setMessageListener(messageListener);
 
 		RabbitAdmin admin = new RabbitAdmin(template.getConnectionFactory());
-		Map<String, Object> args = new HashMap<String, Object>();
-		args.put("x-dead-letter-exchange", "test.DLE");
-		Queue queue = new Queue("", false, false, true, args);
+		Queue queue = QueueBuilder.nonDurable("")
+				.autoDelete()
+				.withArgument("x-dead-letter-exchange", "test.DLE")
+				.build();
 		String testQueueName = admin.declareQueue(queue);
 		// Create a DeadLetterExchange and bind a queue to it with the original routing key
 		DirectExchange dle = new DirectExchange("test.DLE", false, true);
@@ -244,16 +235,12 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 
 		// Verify that the exception strategy has access to the message
 		final AtomicReference<Message> failed = new AtomicReference<Message>();
-		ConditionalRejectingErrorHandler eh = new ConditionalRejectingErrorHandler(new FatalExceptionStrategy() {
-
-			@Override
-			public boolean isFatal(Throwable t) {
-				if (t instanceof ListenerExecutionFailedException) {
-					failed.set(((ListenerExecutionFailedException) t).getFailedMessage());
-				}
-				return t instanceof ListenerExecutionFailedException
-						&& t.getCause() instanceof MessageConversionException;
+		ConditionalRejectingErrorHandler eh = new ConditionalRejectingErrorHandler(t -> {
+			if (t instanceof ListenerExecutionFailedException) {
+				failed.set(((ListenerExecutionFailedException) t).getFailedMessage());
 			}
+			return t instanceof ListenerExecutionFailedException
+					&& t.getCause() instanceof MessageConversionException;
 		});
 		container.setErrorHandler(eh);
 
@@ -354,7 +341,8 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 				logger.debug("Message in pojo: " + value);
 				Thread.sleep(100L);
 				throw exception;
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}
@@ -376,11 +364,13 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 				logger.debug("Message in listener: " + value);
 				try {
 					Thread.sleep(100L);
-				} catch (InterruptedException e) {
+				}
+				catch (InterruptedException e) {
 					// Ignore this exception
 				}
 				throw exception;
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}
@@ -402,11 +392,13 @@ public class MessageListenerContainerErrorHandlerIntegrationTests {
 				logger.debug("Message in channel aware listener: " + value);
 				try {
 					Thread.sleep(100L);
-				} catch (InterruptedException e) {
+				}
+				catch (InterruptedException e) {
 					// Ignore this exception
 				}
 				throw exception;
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}

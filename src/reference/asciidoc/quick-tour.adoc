@@ -28,11 +28,13 @@ compile 'org.springframework.amqp:spring-rabbit:{spring-amqp-version}'
 [[compatibility]]
 ===== Compatibility
 
-While the default Spring Framework version dependency is 4.2.x, Spring AMQP is generally compatible with earlier versions of Spring Framework.
+While the default Spring Framework version dependency is 4.2.x, Spring AMQP is generally compatible with earlier
+versions of Spring Framework.
 Annotation-based listeners and the `RabbitMessagingTemplate` require Spring Framework 4.1 or higher, however.
 
-Similarly, the default `amqp-client` version is 3.5.x but the framework is generally compatible with earlier versions.
+Similarly, the default `amqp-client` version is 3.6.x but the framework is compatible with versions 3.4.0 and above.
 However, of course, features that rely on newer client versions will not be available.
+Note the this refers to the java client library; generally, it will work with older broker versions.
 
 ===== Very, Very Quick
 
@@ -41,13 +43,10 @@ Using plain, imperative Java to send and receive a message:
 [source,java]
 ----
 ConnectionFactory connectionFactory = new CachingConnectionFactory();
-
 AmqpAdmin admin = new RabbitAdmin(connectionFactory);
 admin.declareQueue(new Queue("myqueue"));
-
 AmqpTemplate template = new RabbitTemplate(connectionFactory);
 template.convertAndSend("myqueue", "foo");
-
 String foo = (String) template.receiveAndConvert("myqueue");
 ----
 
@@ -65,9 +64,7 @@ The same example as above, but externalizing the resource configuration to XML:
 ApplicationContext context =
     new GenericXmlApplicationContext("classpath:/rabbit-context.xml");
 AmqpTemplate template = context.getBean(AmqpTemplate.class);
-
 template.convertAndSend("myqueue", "foo");
-
 String foo = (String) template.receiveAndConvert("myqueue");
 ----
 
@@ -104,22 +101,17 @@ The same example again with the external configuration in Java:
 ApplicationContext context =
     new AnnotationConfigApplicationContext(RabbitConfiguration.class);
 AmqpTemplate template = context.getBean(AmqpTemplate.class);
-
 template.convertAndSend("myqueue", "foo");
-
 String foo = (String) template.receiveAndConvert("myqueue");
-----
 
-[source,java]
-----
+........
+
 @Configuration
 public class RabbitConfiguration {
 
     @Bean
     public ConnectionFactory connectionFactory() {
-        CachingConnectionFactory connectionFactory =
-            new CachingConnectionFactory("localhost");
-        return connectionFactory;
+        return new CachingConnectionFactory("localhost");
     }
 
     @Bean

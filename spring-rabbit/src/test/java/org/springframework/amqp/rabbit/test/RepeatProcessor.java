@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2010 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.test;
@@ -88,11 +91,13 @@ public class RepeatProcessor implements MethodRule {
 						for (int i = 0; i < repeats; i++) {
 							try {
 								base.evaluate();
-							} catch (Throwable t) {
+							}
+							catch (Throwable t) {
 								throw new IllegalStateException("Failed on iteration: " + i + " of " + repeats + " (started at 0)", t);
 							}
 						}
-					} finally {
+					}
+					finally {
 						finalizeIfNecessary(target);
 					}
 				}
@@ -111,7 +116,8 @@ public class RepeatProcessor implements MethodRule {
 							public Boolean call() {
 								try {
 									base.evaluate();
-								} catch (Throwable t) {
+								}
+								catch (Throwable t) {
 									throw new IllegalStateException("Failed on iteration: " + count, t);
 								}
 								return true;
@@ -122,7 +128,8 @@ public class RepeatProcessor implements MethodRule {
 						Future<Boolean> future = completionService.take();
 						assertTrue("Null result from completer", future.get());
 					}
-				} finally {
+				}
+				finally {
 					executor.shutdownNow();
 					finalizeIfNecessary(target);
 				}
@@ -142,11 +149,13 @@ public class RepeatProcessor implements MethodRule {
 						public void evaluate() {
 						}
 					}, afters, target).evaluate();
-				} catch (Throwable e) {
+				}
+				catch (Throwable e) {
 					Assert.assertThat(e, CoreMatchers.not(CoreMatchers.anything()));
 				}
 			}
-		} finally {
+		}
+		finally {
 			finalizing = false;
 		}
 	}
@@ -162,7 +171,8 @@ public class RepeatProcessor implements MethodRule {
 					public void evaluate() {
 					}
 				}, befores, target).evaluate();
-			} catch (Throwable e) {
+			}
+			catch (Throwable e) {
 				Assert.assertThat(e, CoreMatchers.not(CoreMatchers.anything()));
 			}
 			initialized = true;

@@ -1,13 +1,23 @@
 /*
- * Copyright 2002-2014 the original author or authors. Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License. You may obtain a copy of the License at
- * http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
- * either express or implied. See the License for the specific language governing permissions and limitations under the
- * License.
+ * Copyright 2002-2016 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.support.converter;
+
+import org.springframework.beans.factory.BeanClassLoaderAware;
+import org.springframework.util.ClassUtils;
 
 /**
  *
@@ -16,16 +26,21 @@ package org.springframework.amqp.support.converter;
  * @author Dave Syer
  * @author Sam Nelson
  * @author Andreas Asplund
+ * @author Artem Bilan
  */
-public abstract class AbstractJsonMessageConverter extends AbstractMessageConverter {
+public abstract class AbstractJsonMessageConverter extends AbstractMessageConverter
+		implements BeanClassLoaderAware {
+
 	public static final String DEFAULT_CHARSET = "UTF-8";
 
 	private volatile String defaultCharset = DEFAULT_CHARSET;
 
 	private ClassMapper classMapper = null;
 
+	private ClassLoader classLoader = ClassUtils.getDefaultClassLoader();
+
 	public ClassMapper getClassMapper() {
-		return classMapper;
+		return this.classMapper;
 
 	}
 
@@ -44,7 +59,17 @@ public abstract class AbstractJsonMessageConverter extends AbstractMessageConver
 				: DEFAULT_CHARSET;
 	}
 
-    public String getDefaultCharset() {
-        return defaultCharset;
-    }
+	public String getDefaultCharset() {
+		return this.defaultCharset;
+	}
+
+	@Override
+	public void setBeanClassLoader(ClassLoader classLoader) {
+		this.classLoader = classLoader;
+	}
+
+	protected ClassLoader getClassLoader() {
+		return this.classLoader;
+	}
+
 }

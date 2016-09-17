@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.config;
 
 import org.aopalliance.intercept.MethodInterceptor;
@@ -132,7 +133,7 @@ public abstract class RetryInterceptorBuilder<T extends MethodInterceptor> {
 	 * @param maxInterval The max interval.
 	 * @return this.
 	 */
-	public RetryInterceptorBuilder<T> backOffOptions(long initialInterval, double multiplier , long maxInterval) {
+	public RetryInterceptorBuilder<T> backOffOptions(long initialInterval, double multiplier, long maxInterval) {
 		Assert.isNull(this.retryOperations, "cannot set the back off policy when a custom retryOperations has been set");
 		Assert.isTrue(!this.backOffPolicySet, "cannot set the back off options when a back off policy has been set");
 		ExponentialBackOffPolicy policy = new ExponentialBackOffPolicy();
@@ -202,7 +203,7 @@ public abstract class RetryInterceptorBuilder<T extends MethodInterceptor> {
 	private RetryInterceptorBuilder() {
 	}
 
-	public static class StatefulRetryInterceptorBuilder extends RetryInterceptorBuilder<StatefulRetryOperationsInterceptor> {
+	public static final class StatefulRetryInterceptorBuilder extends RetryInterceptorBuilder<StatefulRetryOperationsInterceptor> {
 
 		private final StatefulRetryOperationsInterceptorFactoryBean factoryBean =
 				new StatefulRetryOperationsInterceptorFactoryBean();
@@ -288,7 +289,7 @@ public abstract class RetryInterceptorBuilder<T extends MethodInterceptor> {
 	}
 
 
-	public static class StatelessRetryInterceptorBuilder extends RetryInterceptorBuilder<RetryOperationsInterceptor> {
+	public static final class StatelessRetryInterceptorBuilder extends RetryInterceptorBuilder<RetryOperationsInterceptor> {
 
 		private final StatelessRetryOperationsInterceptorFactoryBean factoryBean =
 				new StatelessRetryOperationsInterceptorFactoryBean();

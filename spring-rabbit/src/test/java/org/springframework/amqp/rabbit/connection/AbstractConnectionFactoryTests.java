@@ -1,10 +1,29 @@
+/*
+ * Copyright 2010-2016 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.springframework.amqp.rabbit.connection;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -14,6 +33,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
@@ -22,11 +42,14 @@ import org.mockito.ArgumentCaptor;
 
 import org.springframework.amqp.utils.test.TestUtils;
 import org.springframework.beans.DirectFieldAccessor;
+import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
 import com.rabbitmq.client.ConnectionFactory;
 
 /**
  * @author Dave Syer
+ * @author Gary Russell
+ * @author Dmitry Dbrazhnikov
  */
 public abstract class AbstractConnectionFactoryTests {
 
@@ -54,7 +77,7 @@ public abstract class AbstractConnectionFactoryTests {
 		}));
 
 		Log logger = spy(TestUtils.getPropertyValue(connectionFactory, "logger", Log.class));
-		when(logger.isInfoEnabled()).thenReturn(true);
+		doReturn(true).when(logger).isInfoEnabled();
 		new DirectFieldAccessor(connectionFactory).setPropertyValue("logger", logger);
 		Connection con = connectionFactory.createConnection();
 		assertEquals(1, called.get());
@@ -150,6 +173,20 @@ public abstract class AbstractConnectionFactoryTests {
 		connectionFactory.destroy();
 
 		verify(mockConnectionFactory, never()).newConnection((ExecutorService) null);
+	}
+
+	@Test
+	public void testCreatesConnectionWithGivenFactory() throws Exception {
+		com.rabbitmq.client.ConnectionFactory mockConnectionFactory = mock(com.rabbitmq.client.ConnectionFactory.class);
+		doCallRealMethod().when(mockConnectionFactory).params(any(ExecutorService.class));
+		doCallRealMethod().when(mockConnectionFactory).setThreadFactory(any(ThreadFactory.class));
+		doCallRealMethod().when(mockConnectionFactory).getThreadFactory();
+
+		AbstractConnectionFactory connectionFactory = createConnectionFactory(mockConnectionFactory);
+		ThreadFactory connectionThreadFactory = new CustomizableThreadFactory("connection-thread-");
+		connectionFactory.setConnectionThreadFactory(connectionThreadFactory);
+
+		assertEquals(connectionThreadFactory, mockConnectionFactory.getThreadFactory());
 	}
 
 }

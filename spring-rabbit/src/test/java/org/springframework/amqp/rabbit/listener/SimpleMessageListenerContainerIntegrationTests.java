@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.listener;
 
 import static org.junit.Assert.assertNotNull;
@@ -24,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.log4j.Level;
+import org.apache.logging.log4j.Level;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -110,19 +114,19 @@ public class SimpleMessageListenerContainerIntegrationTests {
 
 	@Parameters
 	public static List<Object[]> getParameters() {
-		return Arrays.asList( //
-				params(0, 1, 1, AcknowledgeMode.AUTO), //
-				params(1, 1, 1, AcknowledgeMode.NONE), //
-				params(2, 4, 1, AcknowledgeMode.AUTO), //
-				extern(3, 4, 1, AcknowledgeMode.AUTO), //
-				params(4, 4, 1, AcknowledgeMode.AUTO, false), //
-				params(5, 2, 2, AcknowledgeMode.AUTO), //
-				params(6, 2, 2, AcknowledgeMode.NONE), //
-				params(7, 20, 4, AcknowledgeMode.AUTO), //
-				params(8, 20, 4, AcknowledgeMode.NONE), //
-				params(9, 300, 4, AcknowledgeMode.AUTO), //
-				params(10, 300, 4, AcknowledgeMode.NONE), //
-				params(11, 300, 4, AcknowledgeMode.AUTO, 10) //
+		return Arrays.asList(
+				params(0, 1, 1, AcknowledgeMode.AUTO),
+				params(1, 1, 1, AcknowledgeMode.NONE),
+				params(2, 4, 1, AcknowledgeMode.AUTO),
+				extern(3, 4, 1, AcknowledgeMode.AUTO),
+				params(4, 4, 1, AcknowledgeMode.AUTO, false),
+				params(5, 2, 2, AcknowledgeMode.AUTO),
+				params(6, 2, 2, AcknowledgeMode.NONE),
+				params(7, 20, 4, AcknowledgeMode.AUTO),
+				params(8, 20, 4, AcknowledgeMode.NONE),
+				params(9, 300, 4, AcknowledgeMode.AUTO),
+				params(10, 300, 4, AcknowledgeMode.NONE),
+				params(11, 300, 4, AcknowledgeMode.AUTO, 10)
 				);
 	}
 
@@ -212,7 +216,7 @@ public class SimpleMessageListenerContainerIntegrationTests {
 		for (int i = 0; i < messageCount; i++) {
 			template.convertAndSend(queue.getName(), i + "foo");
 		}
-		boolean waited = latch.await(Math.max(2, messageCount / 20), TimeUnit.SECONDS);
+		boolean waited = latch.await(Math.max(10, messageCount / 20), TimeUnit.SECONDS);
 		assertTrue("Timed out waiting for message", waited);
 		assertNull(template.receiveAndConvert(queue.getName()));
 	}
@@ -224,15 +228,17 @@ public class SimpleMessageListenerContainerIntegrationTests {
 			for (int i = 0; i < concurrentConsumers; i++) {
 				template.convertAndSend(queue.getName(), i + "foo");
 			}
-		} else {
+		}
+		else {
 			for (int i = 0; i < messageCount; i++) {
 				template.convertAndSend(queue.getName(), i + "foo");
 			}
 		}
 		try {
-			boolean waited = latch.await(5 + Math.max(1, messageCount / 10), TimeUnit.SECONDS);
+			boolean waited = latch.await(10 + Math.max(1, messageCount / 10), TimeUnit.SECONDS);
 			assertTrue("Timed out waiting for message", waited);
-		} finally {
+		}
+		finally {
 			// Wait for broker communication to finish before trying to stop
 			// container
 			Thread.sleep(300L);
@@ -241,7 +247,8 @@ public class SimpleMessageListenerContainerIntegrationTests {
 		}
 		if (acknowledgeMode.isTransactionAllowed()) {
 			assertNotNull(template.receiveAndConvert(queue.getName()));
-		} else {
+		}
+		else {
 			assertNull(template.receiveAndConvert(queue.getName()));
 		}
 	}
@@ -255,6 +262,7 @@ public class SimpleMessageListenerContainerIntegrationTests {
 		container.setConcurrentConsumers(concurrentConsumers);
 		container.setChannelTransacted(transactional);
 		container.setAcknowledgeMode(acknowledgeMode);
+		container.setBeanName("integrationTestContainer");
 		// requires RabbitMQ 3.2.x
 //		container.setConsumerArguments(Collections. <String, Object> singletonMap("x-priority", Integer.valueOf(10)));
 		if (externalTransaction) {
@@ -290,7 +298,8 @@ public class SimpleMessageListenerContainerIntegrationTests {
 				if (fail) {
 					throw new RuntimeException("Planned failure");
 				}
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}
@@ -323,7 +332,8 @@ public class SimpleMessageListenerContainerIntegrationTests {
 				if (fail) {
 					throw new RuntimeException("Planned failure");
 				}
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}
@@ -356,7 +366,8 @@ public class SimpleMessageListenerContainerIntegrationTests {
 				if (fail) {
 					throw new RuntimeException("Planned failure");
 				}
-			} finally {
+			}
+			finally {
 				latch.countDown();
 			}
 		}

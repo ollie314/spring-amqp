@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package org.springframework.amqp.rabbit.listener;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 
-import org.springframework.amqp.core.Address;
 import org.springframework.amqp.rabbit.listener.adapter.HandlerAdapter;
 import org.springframework.amqp.rabbit.listener.adapter.MessagingMessageListenerAdapter;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -84,7 +83,7 @@ public class MethodRabbitListenerEndpoint extends AbstractRabbitListenerEndpoint
 	 * @return the messageHandlerMethodFactory
 	 */
 	protected MessageHandlerMethodFactory getMessageHandlerMethodFactory() {
-		return messageHandlerMethodFactory;
+		return this.messageHandlerMethodFactory;
 	}
 
 	@Override
@@ -93,14 +92,16 @@ public class MethodRabbitListenerEndpoint extends AbstractRabbitListenerEndpoint
 				"Could not create message listener - MessageHandlerMethodFactory not set");
 		MessagingMessageListenerAdapter messageListener = createMessageListenerInstance();
 		messageListener.setHandlerMethod(configureListenerAdapter(messageListener));
-		Address replyToAddress = getDefaultReplyToAddress();
+		String replyToAddress = getDefaultReplyToAddress();
 		if (replyToAddress != null) {
-			messageListener.setResponseExchange(replyToAddress.getExchangeName());
-			messageListener.setResponseRoutingKey(replyToAddress.getRoutingKey());
+			messageListener.setResponseAddress(replyToAddress);
 		}
 		MessageConverter messageConverter = container.getMessageConverter();
 		if (messageConverter != null) {
 			messageListener.setMessageConverter(messageConverter);
+		}
+		if (getBeanResolver() != null) {
+			messageListener.setBeanResolver(getBeanResolver());
 		}
 		return messageListener;
 	}
@@ -121,18 +122,21 @@ public class MethodRabbitListenerEndpoint extends AbstractRabbitListenerEndpoint
 	 * @return the {@link MessagingMessageListenerAdapter} instance.
 	 */
 	protected MessagingMessageListenerAdapter createMessageListenerInstance() {
-		return new MessagingMessageListenerAdapter();
+		return new MessagingMessageListenerAdapter(this.bean, this.method);
 	}
 
-	private Address getDefaultReplyToAddress() {
-		SendTo ann = AnnotationUtils.getAnnotation(getMethod(), SendTo.class);
-		if (ann != null) {
-			String[] destinations = ann.value();
-			if (destinations.length > 1) {
-				throw new IllegalStateException("Invalid @" + SendTo.class.getSimpleName() + " annotation on '"
-						+ getMethod() + "' one destination must be set (got " + Arrays.toString(destinations) + ")");
+	private String getDefaultReplyToAddress() {
+		Method method = getMethod();
+		if (method != null) {
+			SendTo ann = AnnotationUtils.getAnnotation(method, SendTo.class);
+			if (ann != null) {
+				String[] destinations = ann.value();
+				if (destinations.length > 1) {
+					throw new IllegalStateException("Invalid @" + SendTo.class.getSimpleName() + " annotation on '"
+							+ method + "' one destination must be set (got " + Arrays.toString(destinations) + ")");
+				}
+				return destinations.length == 1 ? resolve(destinations[0]) : "";
 			}
-			return destinations.length == 1 ? new Address(resolve(destinations[0])) : new Address(null);
 		}
 		return null;
 	}

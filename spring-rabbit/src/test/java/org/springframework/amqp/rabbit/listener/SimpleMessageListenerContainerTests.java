@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.rabbit.listener;
@@ -25,6 +28,7 @@ import static org.mockito.Matchers.anyMap;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -50,7 +54,6 @@ import org.apache.commons.logging.Log;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import org.springframework.amqp.core.AcknowledgeMode;
@@ -174,36 +177,22 @@ public class SimpleMessageListenerContainerTests {
 		when(connectionFactory.createConnection()).thenReturn(connection);
 		when(connection.createChannel(false)).thenReturn(channel);
 		final AtomicReference<Consumer> consumer = new AtomicReference<Consumer>();
-		doAnswer(new Answer<String>() {
-
-			@Override
-			public String answer(InvocationOnMock invocation) throws Throwable {
-				consumer.set((Consumer) invocation.getArguments()[6]);
-				consumer.get().handleConsumeOk("1");
-				return "1";
-			}
+		doAnswer(invocation -> {
+			consumer.set((Consumer) invocation.getArguments()[6]);
+			consumer.get().handleConsumeOk("1");
+			return "1";
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 		final CountDownLatch latch = new CountDownLatch(2);
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				latch.countDown();
-				return null;
-			}
+		doAnswer(invocation -> {
+			latch.countDown();
+			return null;
 		}).when(channel).basicAck(anyLong(), anyBoolean());
 
 		final List<Message> messages = new ArrayList<Message>();
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
 		container.setQueueNames("foo");
 		container.setTxSize(2);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				messages.add(message);
-			}
-		});
+		container.setMessageListener((MessageListener) message -> messages.add(message));
 		container.start();
 		BasicProperties props = new BasicProperties();
 		byte[] payload = "baz".getBytes();
@@ -217,13 +206,7 @@ public class SimpleMessageListenerContainerTests {
 		consumer.get().handleDelivery("1", envelope, props, payload);
 		assertTrue(latch.await(5, TimeUnit.SECONDS));
 		assertEquals(4, messages.size());
-		Executors.newSingleThreadExecutor().execute(new Runnable() {
-
-			@Override
-			public void run() {
-				container.stop();
-			}
-		});
+		Executors.newSingleThreadExecutor().execute(() -> container.stop());
 		consumer.get().handleCancelOk("1");
 		verify(channel, times(2)).basicAck(anyLong(), anyBoolean());
 		verify(channel).basicAck(2, true);
@@ -245,36 +228,22 @@ public class SimpleMessageListenerContainerTests {
 		when(connection.createChannel(false)).thenReturn(channel);
 		final AtomicReference<Consumer> consumer = new AtomicReference<Consumer>();
 		final String consumerTag = "1";
-		doAnswer(new Answer<String>() {
-
-			@Override
-			public String answer(InvocationOnMock invocation) throws Throwable {
-				consumer.set((Consumer) invocation.getArguments()[6]);
-				consumer.get().handleConsumeOk(consumerTag);
-				return consumerTag;
-			}
+		doAnswer(invocation -> {
+			consumer.set((Consumer) invocation.getArguments()[6]);
+			consumer.get().handleConsumeOk(consumerTag);
+			return consumerTag;
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 		final CountDownLatch latch = new CountDownLatch(2);
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				latch.countDown();
-				return null;
-			}
+		doAnswer(invocation -> {
+			latch.countDown();
+			return null;
 		}).when(channel).basicAck(anyLong(), anyBoolean());
 
 		final List<Message> messages = new ArrayList<Message>();
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
 		container.setQueueNames("foobar");
 		container.setTxSize(2);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-				messages.add(message);
-			}
-		});
+		container.setMessageListener((MessageListener) message -> messages.add(message));
 		container.start();
 		BasicProperties props = new BasicProperties();
 		byte[] payload = "baz".getBytes();
@@ -288,13 +257,7 @@ public class SimpleMessageListenerContainerTests {
 		assertEquals(3, messages.size());
 		assertEquals(consumerTag, messages.get(0).getMessageProperties().getConsumerTag());
 		assertEquals("foobar", messages.get(0).getMessageProperties().getConsumerQueue());
-		Executors.newSingleThreadExecutor().execute(new Runnable() {
-
-			@Override
-			public void run() {
-				container.stop();
-			}
-		});
+		Executors.newSingleThreadExecutor().execute(() -> container.stop());
 		consumer.get().handleCancelOk(consumerTag);
 		verify(channel, times(2)).basicAck(anyLong(), anyBoolean());
 		verify(channel).basicAck(2, true);
@@ -312,30 +275,22 @@ public class SimpleMessageListenerContainerTests {
 		when(connectionFactory.createConnection()).thenReturn(connection);
 		when(connection.createChannel(false)).thenReturn(channel);
 		final AtomicReference<Consumer> consumer = new AtomicReference<Consumer>();
-		final AtomicReference<Map<?, ?>> args = new AtomicReference<Map<?,?>>();
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				consumer.set((Consumer) invocation.getArguments()[6]);
-				consumer.get().handleConsumeOk("foo");
-				args.set((Map<?, ?>) invocation.getArguments()[5]);
-				return "foo";
-			}
+		final AtomicReference<Map<?, ?>> args = new AtomicReference<Map<?, ?>>();
+		doAnswer(invocation -> {
+			consumer.set((Consumer) invocation.getArguments()[6]);
+			consumer.get().handleConsumeOk("foo");
+			args.set((Map<?, ?>) invocation.getArguments()[5]);
+			return "foo";
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), any(Map.class), any(Consumer.class));
 
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
 		container.setQueueNames("foo");
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-			}
-		});
-		container.setConsumerArguments(Collections. <String, Object> singletonMap("x-priority", Integer.valueOf(10)));
+		container.setMessageListener((MessageListener) message -> { });
+		container.setConsumerArguments(Collections.<String, Object>singletonMap("x-priority", Integer.valueOf(10)));
 		container.afterPropertiesSet();
 		container.start();
-		verify(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), any(Map.class), any(Consumer.class));
+		verify(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), any(Map.class),
+				any(Consumer.class));
 		assertTrue(args.get() != null);
 		assertEquals(10, args.get().get("x-priority"));
 		consumer.get().handleCancelOk("foo");
@@ -364,12 +319,7 @@ public class SimpleMessageListenerContainerTests {
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
 		container.setQueueNames("foo");
 		container.setReceiveTimeout(1);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-			}
-		});
+		container.setMessageListener((MessageListener) message -> { });
 		container.afterPropertiesSet();
 		container.start();
 		assertTrue(latch1.await(10, TimeUnit.SECONDS));
@@ -405,24 +355,15 @@ public class SimpleMessageListenerContainerTests {
 		when(connectionFactory.createConnection()).thenReturn(connection);
 		when(connection.createChannel(false)).thenReturn(channel1);
 		final AtomicInteger count = new AtomicInteger();
-		doAnswer(new Answer<String>() {
-
-			@Override
-			public String answer(InvocationOnMock invocation) throws Throwable {
-				Consumer cons = (Consumer) invocation.getArguments()[6];
-				String consumerTag = "consFoo" + count.incrementAndGet();
-				cons.handleConsumeOk(consumerTag);
-				return consumerTag;
-			}
+		doAnswer(invocation -> {
+			Consumer cons = (Consumer) invocation.getArguments()[6];
+			String consumerTag = "consFoo" + count.incrementAndGet();
+			cons.handleConsumeOk(consumerTag);
+			return consumerTag;
 		}).when(channel1).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-			}
-		});
+		container.setMessageListener((MessageListener) message -> { });
 		container.afterPropertiesSet();
 
 		for (int i = 0; i < 10; i++) {
@@ -437,36 +378,22 @@ public class SimpleMessageListenerContainerTests {
 	@SuppressWarnings("unchecked")
 	protected void setupMockConsume(Channel channel, final List<Consumer> consumers, final AtomicInteger consumerTag,
 			final CountDownLatch latch) throws IOException {
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				Consumer cons = (Consumer) invocation.getArguments()[6];
-				consumers.add(cons);
-				String actualTag = String.valueOf(consumerTag.getAndIncrement());
-				cons.handleConsumeOk(actualTag);
-				latch.countDown();
-				return actualTag;
-			}
+		doAnswer(invocation -> {
+			Consumer cons = (Consumer) invocation.getArguments()[6];
+			consumers.add(cons);
+			String actualTag = String.valueOf(consumerTag.getAndIncrement());
+			cons.handleConsumeOk(actualTag);
+			latch.countDown();
+			return actualTag;
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 	}
 
 	protected void setUpMockCancel(Channel channel, final List<Consumer> consumers) throws IOException {
 		final Executor exec = Executors.newCachedThreadPool();
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				final String consTag = (String) invocation.getArguments()[0];
-				exec.execute(new Runnable() {
-
-					@Override
-					public void run() {
-						consumers.get(Integer.parseInt(consTag)).handleCancelOk(consTag);
-					}
-				});
-				return null;
-			}
+		doAnswer(invocation -> {
+			final String consTag = (String) invocation.getArguments()[0];
+			exec.execute(() -> consumers.get(Integer.parseInt(consTag)).handleCancelOk(consTag));
+			return null;
 		}).when(channel).basicCancel(anyString());
 	}
 
@@ -514,8 +441,9 @@ public class SimpleMessageListenerContainerTests {
 		assertTrue(latch2.await(10, TimeUnit.SECONDS));
 
 		waitForConsumersToStop(consumers);
-		Set<?> openConnections = TestUtils.getPropertyValue(ccf, "openConnections", Set.class);
-		assertEquals(1, openConnections.size());
+		Set<?> allocatedConnections = TestUtils.getPropertyValue(ccf, "allocatedConnections", Set.class);
+		assertEquals(2, allocatedConnections.size());
+		assertEquals("1", ccf.getCacheProperties().get("openConnections"));
 	}
 
 	@SuppressWarnings("unchecked")
@@ -527,40 +455,27 @@ public class SimpleMessageListenerContainerTests {
 		when(connectionFactory.createConnection()).thenReturn(connection);
 		when(connection.createChannel(false)).thenReturn(channel);
 		final AtomicReference<Consumer> consumer = new AtomicReference<Consumer>();
-		doAnswer(new Answer<String>() {
-
-			@Override
-			public String answer(InvocationOnMock invocation) throws Throwable {
-				consumer.set((Consumer) invocation.getArguments()[6]);
-				consumer.get().handleConsumeOk("foo");
-				return "foo";
-			}
+		doAnswer(invocation -> {
+			consumer.set((Consumer) invocation.getArguments()[6]);
+			consumer.get().handleConsumeOk("foo");
+			return "foo";
 		}).when(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 
 		final SimpleMessageListenerContainer container = new SimpleMessageListenerContainer(connectionFactory);
 		container.setQueueNames("foo");
-		container.setMessageListener(new MessageListener() {
-
-			@Override
-			public void onMessage(Message message) {
-			}
-		});
+		container.setMessageListener((MessageListener) message -> { });
 		container.setReceiveTimeout(1);
 		container.afterPropertiesSet();
 		container.start();
 		verify(channel).basicConsume(anyString(), anyBoolean(), anyString(), anyBoolean(), anyBoolean(), anyMap(), any(Consumer.class));
 		Log logger = spy(TestUtils.getPropertyValue(container, "logger", Log.class));
-		when(logger.isDebugEnabled()).thenReturn(false);
+		doReturn(false).when(logger).isDebugEnabled();
 		final CountDownLatch latch = new CountDownLatch(1);
-		doAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				if (((String) invocation.getArguments()[0]).startsWith("Consumer raised exception")) {
-					latch.countDown();
-				}
-				return invocation.callRealMethod();
+		doAnswer(invocation -> {
+			if (((String) invocation.getArguments()[0]).startsWith("Consumer raised exception")) {
+				latch.countDown();
 			}
+			return invocation.callRealMethod();
 		}).when(logger).warn(any());
 		new DirectFieldAccessor(container).setPropertyValue("logger", logger);
 		consumer.get().handleCancel("foo");
@@ -575,14 +490,10 @@ public class SimpleMessageListenerContainerTests {
 		container.setQueueNames("foo");
 		container.setRecoveryBackOff(new FixedBackOff(100, 3));
 		container.setConcurrentConsumers(3);
-		doAnswer(new Answer<BlockingQueueConsumer>() {
-
-			@Override
-			public BlockingQueueConsumer answer(InvocationOnMock invocation) throws Throwable {
-				BlockingQueueConsumer consumer = spy((BlockingQueueConsumer) invocation.callRealMethod());
-				doThrow(RuntimeException.class).when(consumer).start();
-				return consumer;
-			}
+		doAnswer(invocation -> {
+			BlockingQueueConsumer consumer = spy((BlockingQueueConsumer) invocation.callRealMethod());
+			doThrow(RuntimeException.class).when(consumer).start();
+			return consumer;
 		}).when(container).createBlockingQueueConsumer();
 		container.afterPropertiesSet();
 		container.start();
@@ -598,28 +509,24 @@ public class SimpleMessageListenerContainerTests {
 
 	private Answer<Object> messageToConsumer(final Channel mockChannel, final SimpleMessageListenerContainer container,
 			final boolean cancel, final CountDownLatch latch) {
-		return new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				String returnValue = null;
-				Set<?> consumers = TestUtils.getPropertyValue(container, "consumers", Map.class).keySet();
-				for (Object consumer : consumers) {
-					ChannelProxy channel = TestUtils.getPropertyValue(consumer, "channel", ChannelProxy.class);
-					if (channel != null && channel.getTargetChannel() == mockChannel) {
-						Consumer rabbitConsumer = TestUtils.getPropertyValue(consumer, "consumer", Consumer.class);
-						if (cancel) {
-							rabbitConsumer.handleCancelOk((String) invocation.getArguments()[0]);
-						}
-						else {
-							rabbitConsumer.handleConsumeOk("foo");
-							returnValue = "foo";
-						}
-						latch.countDown();
+		return invocation -> {
+			String returnValue = null;
+			Set<?> consumers = TestUtils.getPropertyValue(container, "consumers", Map.class).keySet();
+			for (Object consumer : consumers) {
+				ChannelProxy channel = TestUtils.getPropertyValue(consumer, "channel", ChannelProxy.class);
+				if (channel != null && channel.getTargetChannel() == mockChannel) {
+					Consumer rabbitConsumer = TestUtils.getPropertyValue(consumer, "consumer", Consumer.class);
+					if (cancel) {
+						rabbitConsumer.handleCancelOk((String) invocation.getArguments()[0]);
 					}
+					else {
+						rabbitConsumer.handleConsumeOk("foo");
+						returnValue = "foo";
+					}
+					latch.countDown();
 				}
-				return returnValue;
 			}
+			return returnValue;
 		};
 
 	}

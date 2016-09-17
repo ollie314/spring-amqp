@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.support.postprocessor;
 
 import java.io.ByteArrayInputStream;
@@ -81,7 +82,7 @@ public abstract class AbstractDecompressingPostProcessor implements MessagePostP
 	public Message postProcessMessage(Message message) throws AmqpException {
 		Object autoDecompress = message.getMessageProperties().getHeaders()
 				.get(MessageProperties.SPRING_AUTO_DECOMPRESS);
-		if (this.alwaysDecompress || (autoDecompress instanceof Boolean && ((Boolean)autoDecompress))) {
+		if (this.alwaysDecompress || (autoDecompress instanceof Boolean && ((Boolean) autoDecompress))) {
 			ByteArrayInputStream zipped = new ByteArrayInputStream(message.getBody());
 			try {
 				InputStream unzipper = getDecompressorStream(zipped);

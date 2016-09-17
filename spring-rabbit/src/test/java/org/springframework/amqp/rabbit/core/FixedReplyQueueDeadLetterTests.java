@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2015 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core;
 
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -31,6 +30,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.FixedReplyQueueDeadLetterTests.FixedReplyQueueDeadLetterConfig;
@@ -50,7 +50,7 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
  * @since 1.3.6
  */
 
-@ContextConfiguration(classes=FixedReplyQueueDeadLetterConfig.class)
+@ContextConfiguration(classes = FixedReplyQueueDeadLetterConfig.class)
 @RunWith(SpringJUnit4ClassRunner.class)
 @DirtiesContext
 public class FixedReplyQueueDeadLetterTests {
@@ -162,7 +162,9 @@ public class FixedReplyQueueDeadLetterTests {
 		 */
 		@Bean
 		public Queue requestQueue() {
-			return new Queue("dlx.test.requestQ", false, false, true);
+			return QueueBuilder.nonDurable("dlx.test.requestQ")
+					.autoDelete()
+					.build();
 		}
 
 		/**
@@ -170,9 +172,10 @@ public class FixedReplyQueueDeadLetterTests {
 		 */
 		@Bean
 		public Queue replyQueue() {
-			Map<String, Object> args = new HashMap<String, Object>();
-			args.put("x-dead-letter-exchange", "reply.dlx");
-			return new Queue("dlx.test.replyQ", false, false, true, args);
+			return QueueBuilder.nonDurable("dlx.test.replyQ")
+				    .autoDelete()
+				    .withArgument("x-dead-letter-exchange", "reply.dlx")
+				    .build();
 		}
 
 		/**
@@ -180,7 +183,9 @@ public class FixedReplyQueueDeadLetterTests {
 		 */
 		@Bean
 		public Queue dlq() {
-			return new Queue("dlx.test.DLQ", false, false, true);
+			return QueueBuilder.nonDurable("dlx.test.DLQ")
+					.autoDelete()
+					.build();
 		}
 
 		@Bean

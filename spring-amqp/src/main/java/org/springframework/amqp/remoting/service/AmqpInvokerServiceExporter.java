@@ -1,14 +1,17 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.springframework.amqp.remoting.service;
@@ -65,7 +68,7 @@ public class AmqpInvokerServiceExporter extends RemoteInvocationBasedExporter im
 			throw new AmqpRejectAndDontRequeueException("No replyToAddress in inbound AMQP Message");
 		}
 
-		Object invocationRaw = messageConverter.fromMessage(message);
+		Object invocationRaw = this.messageConverter.fromMessage(message);
 
 		RemoteInvocationResult remoteInvocationResult;
 		if (invocationRaw == null || !(invocationRaw instanceof RemoteInvocation)) {
@@ -80,13 +83,13 @@ public class AmqpInvokerServiceExporter extends RemoteInvocationBasedExporter im
 	}
 
 	private void send(Object object, Address replyToAddress) {
-		Message message = messageConverter.toMessage(object, new MessageProperties());
+		Message message = this.messageConverter.toMessage(object, new MessageProperties());
 
 		getAmqpTemplate().send(replyToAddress.getExchangeName(), replyToAddress.getRoutingKey(), message);
 	}
 
 	public AmqpTemplate getAmqpTemplate() {
-		return amqpTemplate;
+		return this.amqpTemplate;
 	}
 
 	/**
@@ -107,7 +110,7 @@ public class AmqpInvokerServiceExporter extends RemoteInvocationBasedExporter im
 	}
 
 	public MessageConverter getMessageConverter() {
-		return messageConverter;
+		return this.messageConverter;
 	}
 
 	/**

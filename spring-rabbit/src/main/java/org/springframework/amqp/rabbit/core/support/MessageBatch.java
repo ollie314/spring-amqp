@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.core.support;
 
 import org.springframework.amqp.core.Message;
@@ -43,21 +44,21 @@ public class MessageBatch {
 	 * @return the exchange
 	 */
 	public String getExchange() {
-		return exchange;
+		return this.exchange;
 	}
 
 	/**
 	 * @return the routingKey
 	 */
 	public String getRoutingKey() {
-		return routingKey;
+		return this.routingKey;
 	}
 
 	/**
 	 * @return the message
 	 */
 	public Message getMessage() {
-		return message;
+		return this.message;
 	}
 
 }

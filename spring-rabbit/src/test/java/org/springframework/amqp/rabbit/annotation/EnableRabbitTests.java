@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ import org.springframework.stereotype.Component;
 /**
  * @author Stephane Nicoll
  * @author Artem Bilan
+ * @author Gary Russell
  */
 public class EnableRabbitTests extends AbstractRabbitAnnotationDrivenTests {
 
@@ -62,7 +63,7 @@ public class EnableRabbitTests extends AbstractRabbitAnnotationDrivenTests {
 	public void sampleConfiguration() {
 		ConfigurableApplicationContext context = new AnnotationConfigApplicationContext(
 				EnableRabbitSampleConfig.class, SampleBean.class);
-		testSampleConfiguration(context);
+		testSampleConfiguration(context, 2);
 	}
 
 	@Override
@@ -155,6 +156,15 @@ public class EnableRabbitTests extends AbstractRabbitAnnotationDrivenTests {
 		assertTrue("Should have been stopped " + container, container.isStopped());
 	}
 
+	@Override
+	@Test
+	public void rabbitListeners() {
+		ConfigurableApplicationContext context = new AnnotationConfigApplicationContext(
+				EnableRabbitDefaultContainerFactoryConfig.class,
+				RabbitListenersBean.class,
+				ClassLevelListenersBean.class);
+		testRabbitListenerRepeatable(context);
+	}
 
 	@EnableRabbit
 	@Configuration
@@ -169,6 +179,24 @@ public class EnableRabbitTests extends AbstractRabbitAnnotationDrivenTests {
 		public RabbitListenerContainerTestFactory simpleFactory() {
 			return new RabbitListenerContainerTestFactory();
 		}
+
+		@Bean
+		public Listener listener() {
+			return new Listener();
+		}
+
+		static class Listener {
+
+			@RabbitListener(bindings =
+					@QueueBinding(value = @Queue(value = "foo", ignoreDeclarationExceptions = "true"),
+								exchange = @Exchange(value = "bar", ignoreDeclarationExceptions = "true"),
+								key = "baz", ignoreDeclarationExceptions = "true"))
+			public void handle(String foo) {
+				// empty
+			}
+
+		}
+
 	}
 
 	@EnableRabbit

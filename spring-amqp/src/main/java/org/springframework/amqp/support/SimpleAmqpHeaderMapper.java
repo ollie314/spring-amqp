@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,6 +75,10 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 		Object correlationId = headers.get(AmqpHeaders.CORRELATION_ID);
 		if (correlationId instanceof byte[]) {
 			amqpMessageProperties.setCorrelationId((byte[]) correlationId);
+		}
+		Integer delay = getHeaderIfAvailable(headers, AmqpHeaders.DELAY, Integer.class);
+		if (delay != null) {
+			amqpMessageProperties.setDelay(delay);
 		}
 		MessageDeliveryMode deliveryMode = getHeaderIfAvailable(headers, AmqpHeaders.DELIVERY_MODE, MessageDeliveryMode.class);
 		if (deliveryMode != null) {
@@ -181,9 +185,9 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 			if (correlationId != null && correlationId.length > 0) {
 				headers.put(AmqpHeaders.CORRELATION_ID, correlationId);
 			}
-			MessageDeliveryMode deliveryMode = amqpMessageProperties.getDeliveryMode();
-			if (deliveryMode != null) {
-				headers.put(AmqpHeaders.DELIVERY_MODE, deliveryMode);
+			MessageDeliveryMode receivedDeliveryMode = amqpMessageProperties.getReceivedDeliveryMode();
+			if (receivedDeliveryMode != null) {
+				headers.put(AmqpHeaders.RECEIVED_DELIVERY_MODE, receivedDeliveryMode);
 			}
 			long deliveryTag = amqpMessageProperties.getDeliveryTag();
 			if (deliveryTag > 0) {
@@ -204,6 +208,10 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 			Integer priority = amqpMessageProperties.getPriority();
 			if (priority != null && priority > 0) {
 				headers.put(AmqpMessageHeaderAccessor.PRIORITY, priority);
+			}
+			Integer receivedDelay = amqpMessageProperties.getReceivedDelay();
+			if (receivedDelay != null) {
+				headers.put(AmqpHeaders.RECEIVED_DELAY, receivedDelay);
 			}
 			String receivedExchange = amqpMessageProperties.getReceivedExchange();
 			if (StringUtils.hasText(receivedExchange)) {
@@ -231,7 +239,7 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 			}
 			String userId = amqpMessageProperties.getUserId();
 			if (StringUtils.hasText(userId)) {
-				headers.put(AmqpHeaders.USER_ID, userId);
+				headers.put(AmqpHeaders.RECEIVED_USER_ID, userId);
 			}
 			String consumerTag = amqpMessageProperties.getConsumerTag();
 			if (StringUtils.hasText(consumerTag)) {
@@ -258,8 +266,7 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 	/**
 	 * Will extract Content-Type from MessageHeaders and convert it to String if possible
 	 * Required since Content-Type can be represented as org.springframework.http.MediaType
-	 * see INT-2713 for more details
-	 *
+	 * or org.springframework.util.MimeType.
 	 */
 	private String extractContentTypeAsString(Map<String, Object> headers) {
 		String contentTypeStringValue = null;
@@ -269,7 +276,9 @@ public class SimpleAmqpHeaderMapper extends AbstractHeaderMapper<MessageProperti
 		if (contentType != null) {
 			String contentTypeClassName = contentType.getClass().getName();
 
-			if (contentTypeClassName.equals("org.springframework.http.MediaType")) { // see INT-2713
+			// TODO: 2.0 - check instanceof MimeType instead
+			if (contentTypeClassName.equals("org.springframework.http.MediaType")
+					|| contentTypeClassName.equals("org.springframework.util.MimeType")) {
 				contentTypeStringValue = contentType.toString();
 			}
 			else if (contentType instanceof String) {

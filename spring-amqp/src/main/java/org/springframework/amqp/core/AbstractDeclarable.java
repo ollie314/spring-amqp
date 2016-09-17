@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.core;
 
 import java.util.ArrayList;
@@ -35,6 +36,8 @@ public abstract class AbstractDeclarable implements Declarable {
 
 	private volatile Collection<Object> declaringAdmins = new ArrayList<Object>();
 
+	private boolean ignoreDeclarationExceptions;
+
 	@Override
 	public boolean shouldDeclare() {
 		return this.shouldDeclare;
@@ -52,6 +55,20 @@ public abstract class AbstractDeclarable implements Declarable {
 	@Override
 	public Collection<?> getDeclaringAdmins() {
 		return Collections.unmodifiableCollection(this.declaringAdmins);
+	}
+
+	@Override
+	public boolean isIgnoreDeclarationExceptions() {
+		return this.ignoreDeclarationExceptions;
+	}
+
+	/**
+	 * Set to true to ignore exceptions such as mismatched properties when declaring.
+	 * @param ignoreDeclarationExceptions the ignoreDeclarationExceptions.
+	 * @since 1.6
+	 */
+	public void setIgnoreDeclarationExceptions(boolean ignoreDeclarationExceptions) {
+		this.ignoreDeclarationExceptions = ignoreDeclarationExceptions;
 	}
 
 	/**
@@ -75,4 +92,5 @@ public abstract class AbstractDeclarable implements Declarable {
 		}
 		this.declaringAdmins = declaringAdmins;
 	}
+
 }

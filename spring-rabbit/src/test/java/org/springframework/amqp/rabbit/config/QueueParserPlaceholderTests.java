@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2010 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.config;
 
 import org.junit.After;
 import org.junit.Before;
+
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.GenericXmlApplicationContext;
 import org.springframework.core.io.ClassPathResource;
@@ -35,8 +37,8 @@ public class QueueParserPlaceholderTests extends QueueParserTests {
 
 	@After
 	public void closeBeanFactory() throws Exception {
-		if (beanFactory!=null) {
-			((ConfigurableApplicationContext)beanFactory).close();
+		if (beanFactory != null) {
+			((ConfigurableApplicationContext) beanFactory).close();
 		}
 	}
 

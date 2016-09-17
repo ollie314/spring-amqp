@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.test;
 
 import static org.junit.Assert.fail;
@@ -64,17 +65,17 @@ import com.rabbitmq.http.client.Client;
  * @author Gary Russell
  *
  */
-public class BrokerRunning extends TestWatcher {
+public final class BrokerRunning extends TestWatcher {
 
 	private static final String DEFAULT_QUEUE_NAME = BrokerRunning.class.getName();
 
 	private static Log logger = LogFactory.getLog(BrokerRunning.class);
 
 	// Static so that we only test once on failure: speeds up test suite
-	private static Map<Integer,Boolean> brokerOnline = new HashMap<Integer, Boolean>();
+	private static Map<Integer, Boolean> brokerOnline = new HashMap<Integer, Boolean>();
 
 	// Static so that we only test once on failure
-	private static Map<Integer,Boolean> brokerOffline = new HashMap<Integer, Boolean>();
+	private static Map<Integer, Boolean> brokerOffline = new HashMap<Integer, Boolean>();
 
 	private final boolean assumeOnline;
 
@@ -89,6 +90,8 @@ public class BrokerRunning extends TestWatcher {
 	private int port;
 
 	private String hostName = null;
+
+	private RabbitAdmin admin;
 
 	/**
 	 * Ensure the broker is running and has an empty queue with the specified name in the default exchange.
@@ -199,6 +202,7 @@ public class BrokerRunning extends TestWatcher {
 				connectionFactory.setHost(hostName);
 			}
 			RabbitAdmin admin = new RabbitAdmin(connectionFactory);
+			this.admin = admin;
 
 			for (Queue queue : queues) {
 				String queueName = queue.getName();
@@ -245,19 +249,30 @@ public class BrokerRunning extends TestWatcher {
 		}
 
 		return super.apply(base, description);
-
 	}
 
 	private boolean isDefaultQueue(String queue) {
 		return DEFAULT_QUEUE_NAME.equals(queue);
 	}
 
-	public void removeTestQueues() {
+	public RabbitAdmin getAdmin() {
+		return this.admin;
+	}
+
+	public void removeTestQueues(String... additionalQueues) {
 		CachingConnectionFactory connectionFactory = new CachingConnectionFactory();
 		connectionFactory.setHost("localhost");
 		RabbitAdmin admin = new RabbitAdmin(connectionFactory);
 		for (Queue queue : this.queues) {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Deleting " + queue);
+			}
 			admin.deleteQueue(queue.getName());
+		}
+		if (additionalQueues != null) {
+			for (String queueName : additionalQueues) {
+				admin.deleteQueue(queueName);
+			}
 		}
 		connectionFactory.destroy();
 	}

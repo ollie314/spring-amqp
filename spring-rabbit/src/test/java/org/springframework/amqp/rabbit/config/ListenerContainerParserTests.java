@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2015 the original author or authors.
+ * Copyright 2010-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,6 @@ public class ListenerContainerParserTests {
 
 	@Before
 	public void setUp() throws Exception {
-		ListenerContainerParser parser = new ListenerContainerParser();
 		beanFactory = new DefaultListableBeanFactory();
 		XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(beanFactory);
 		reader.loadBeanDefinitions(new ClassPathResource(getClass().getSimpleName() + "-context.xml", getClass()));
@@ -78,7 +77,7 @@ public class ListenerContainerParserTests {
 		assertEquals(beanFactory.getBean(TestBean.class), listenerAccessor.getPropertyValue("delegate"));
 		assertEquals("handle", listenerAccessor.getPropertyValue("defaultListenerMethod"));
 		Queue queue = beanFactory.getBean("bar", Queue.class);
-		assertEquals("[foo, "+queue.getName()+"]", Arrays.asList(container.getQueueNames()).toString());
+		assertEquals("[foo, " + queue.getName() + "]", Arrays.asList(container.getQueueNames()).toString());
 		assertEquals(5, ReflectionTestUtils.getField(container, "concurrentConsumers"));
 		assertEquals(6, ReflectionTestUtils.getField(container, "maxConcurrentConsumers"));
 		assertEquals(1234L, ReflectionTestUtils.getField(container, "startConsumerMinInterval"));
@@ -103,13 +102,16 @@ public class ListenerContainerParserTests {
 		assertEquals(3, group.size());
 		assertThat(group, Matchers.contains(beanFactory.getBean("container1"), beanFactory.getBean("testListener1"),
 				beanFactory.getBean("testListener2")));
+		assertEquals(1235L, ReflectionTestUtils.getField(container, "idleEventInterval"));
+		assertEquals("container1", container.getListenerId());
+		assertTrue(TestUtils.getPropertyValue(container, "mismatchedQueuesFatal", Boolean.class));
 	}
 
 	@Test
 	public void testParseWithQueues() throws Exception {
 		SimpleMessageListenerContainer container = beanFactory.getBean("container2", SimpleMessageListenerContainer.class);
 		Queue queue = beanFactory.getBean("bar", Queue.class);
-		assertEquals("[foo, "+queue.getName()+"]", Arrays.asList(container.getQueueNames()).toString());
+		assertEquals("[foo, " + queue.getName() + "]", Arrays.asList(container.getQueueNames()).toString());
 		assertTrue(TestUtils.getPropertyValue(container, "missingQueuesFatal", Boolean.class));
 		assertFalse(TestUtils.getPropertyValue(container, "autoDeclare", Boolean.class));
 	}
@@ -185,12 +187,12 @@ public class ListenerContainerParserTests {
 	@Test
 	public void testIncompatibleTxAtts() {
 		try {
-			new ClassPathXmlApplicationContext(getClass().getSimpleName() + "-fail-context.xml", getClass()).close();;
+			new ClassPathXmlApplicationContext(getClass().getSimpleName() + "-fail-context.xml", getClass()).close();
 			fail("Parse exception exptected");
 		}
 		catch (BeanDefinitionParsingException e) {
 			assertTrue(e.getMessage().startsWith(
-					"Configuration problem: Listener Container - cannot set channel-transacted with acknowledge='NONE'"));
+				"Configuration problem: Listener Container - cannot set channel-transacted with acknowledge='NONE'"));
 		}
 	}
 

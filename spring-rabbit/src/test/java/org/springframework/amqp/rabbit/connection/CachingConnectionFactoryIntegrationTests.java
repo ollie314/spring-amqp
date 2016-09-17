@@ -1,20 +1,23 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.connection;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -51,7 +54,6 @@ import org.springframework.amqp.AmqpIOException;
 import org.springframework.amqp.AmqpTimeoutException;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory.CacheMode;
-import org.springframework.amqp.rabbit.core.ChannelCallback;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.test.BrokerRunning;
@@ -61,8 +63,6 @@ import org.springframework.beans.DirectFieldAccessor;
 
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.DefaultConsumer;
-import com.rabbitmq.client.ShutdownListener;
-import com.rabbitmq.client.ShutdownSignalException;
 
 /**
  * @author Dave Syer
@@ -73,12 +73,14 @@ import com.rabbitmq.client.ShutdownSignalException;
  */
 public class CachingConnectionFactoryIntegrationTests {
 
+	private static final String CF_INTEGRATION_TEST_QUEUE = "cfIntegrationTest";
+
 	private static Log logger = LogFactory.getLog(CachingConnectionFactoryIntegrationTests.class);
 
 	private CachingConnectionFactory connectionFactory;
 
 	@Rule
-	public BrokerRunning brokerIsRunning = BrokerRunning.isRunning();
+	public BrokerRunning brokerIsRunning = BrokerRunning.isRunningWithEmptyQueues(CF_INTEGRATION_TEST_QUEUE);
 
 	@Rule
 	public ExpectedException exception = ExpectedException.none();
@@ -88,10 +90,15 @@ public class CachingConnectionFactoryIntegrationTests {
 		connectionFactory = new CachingConnectionFactory();
 		connectionFactory.setHost("localhost");
 		connectionFactory.setPort(BrokerTestUtils.getPort());
+		connectionFactory.getRabbitConnectionFactory().getClientProperties().put("foo", "bar");
 	}
 
 	@After
 	public void close() {
+		if (!this.connectionFactory.getVirtualHost().equals("non-existent")) {
+			new RabbitAdmin(this.connectionFactory).deleteQueue(CF_INTEGRATION_TEST_QUEUE);
+		}
+		assertEquals("bar", connectionFactory.getRabbitConnectionFactory().getClientProperties().get("foo"));
 		connectionFactory.destroy();
 	}
 
@@ -108,19 +115,21 @@ public class CachingConnectionFactoryIntegrationTests {
 		connections.add(connectionFactory.createConnection());
 		connections.add(connectionFactory.createConnection());
 		connections.add(connectionFactory.createConnection());
-		Set<?> openConnections = TestUtils.getPropertyValue(connectionFactory, "openConnections", Set.class);
-		assertEquals(6, openConnections.size());
+		Set<?> allocatedConnections = TestUtils.getPropertyValue(connectionFactory, "allocatedConnections", Set.class);
+		assertEquals(6, allocatedConnections.size());
 		for (Connection connection : connections) {
 			connection.close();
 		}
-		assertEquals(5, openConnections.size());
-		BlockingQueue<?> idleConnections = TestUtils.getPropertyValue(connectionFactory, "idleConnections", BlockingQueue.class);
-		assertEquals(5, idleConnections.size());
+		assertEquals(6, allocatedConnections.size());
+		assertEquals("5", connectionFactory.getCacheProperties().get("openConnections"));
+		BlockingQueue<?> idleConnections = TestUtils.getPropertyValue(connectionFactory, "idleConnections",
+				BlockingQueue.class);
+		assertEquals(6, idleConnections.size());
 		connections.clear();
 		connections.add(connectionFactory.createConnection());
 		connections.add(connectionFactory.createConnection());
-		assertEquals(5, openConnections.size());
-		assertEquals(3, idleConnections.size());
+		assertEquals(6, allocatedConnections.size());
+		assertEquals(4, idleConnections.size());
 		for (Connection connection : connections) {
 			connection.close();
 		}
@@ -130,6 +139,7 @@ public class CachingConnectionFactoryIntegrationTests {
 	public void testCachedConnectionsChannelLimit() throws Exception {
 		connectionFactory.setCacheMode(CacheMode.CONNECTION);
 		connectionFactory.setConnectionCacheSize(2);
+		connectionFactory.setChannelCacheSize(1);
 		connectionFactory.setChannelCheckoutTimeout(10);
 		connectionFactory.setExecutor(Executors.newCachedThreadPool());
 		List<Connection> connections = new ArrayList<Connection>();
@@ -141,13 +151,13 @@ public class CachingConnectionFactoryIntegrationTests {
 			channels.add(connections.get(0).createChannel(false));
 			fail("Exception expected");
 		}
-		catch (AmqpTimeoutException e) {}
+		catch (AmqpTimeoutException e) { }
 		channels.add(connections.get(1).createChannel(false));
 		try {
 			channels.add(connections.get(1).createChannel(false));
 			fail("Exception expected");
 		}
-		catch (AmqpTimeoutException e) {}
+		catch (AmqpTimeoutException e) { }
 		channels.get(0).close();
 		channels.get(1).close();
 		channels.add(connections.get(0).createChannel(false));
@@ -169,8 +179,8 @@ public class CachingConnectionFactoryIntegrationTests {
 		List<Connection> connections = new ArrayList<Connection>();
 		connections.add(connectionFactory.createConnection());
 		connections.add(connectionFactory.createConnection());
-		Set<?> openConnections = TestUtils.getPropertyValue(connectionFactory, "openConnections", Set.class);
-		assertEquals(2, openConnections.size());
+		Set<?> allocatedConnections = TestUtils.getPropertyValue(connectionFactory, "allocatedConnections", Set.class);
+		assertEquals(2, allocatedConnections.size());
 		assertNotSame(connections.get(0), connections.get(1));
 		List<Channel> channels = new ArrayList<Channel>();
 		for (int i = 0; i < 5; i++) {
@@ -180,11 +190,13 @@ public class CachingConnectionFactoryIntegrationTests {
 			channels.add(connections.get(1).createChannel(true));
 		}
 		@SuppressWarnings("unchecked")
-		Map<?, List<?>> cachedChannels = TestUtils.getPropertyValue(connectionFactory, "openConnectionNonTransactionalChannels", Map.class);
+		Map<?, List<?>> cachedChannels = TestUtils.getPropertyValue(connectionFactory,
+				"allocatedConnectionNonTransactionalChannels", Map.class);
 		assertEquals(0, cachedChannels.get(connections.get(0)).size());
 		assertEquals(0, cachedChannels.get(connections.get(1)).size());
 		@SuppressWarnings("unchecked")
-		Map<?, List<?>> cachedTxChannels = TestUtils.getPropertyValue(connectionFactory, "openConnectionTransactionalChannels", Map.class);
+		Map<?, List<?>> cachedTxChannels = TestUtils.getPropertyValue(connectionFactory,
+				"allocatedConnectionTransactionalChannels", Map.class);
 		assertEquals(0, cachedTxChannels.get(connections.get(0)).size());
 		assertEquals(0, cachedTxChannels.get(connections.get(1)).size());
 		for (Channel channel : channels) {
@@ -211,20 +223,23 @@ public class CachingConnectionFactoryIntegrationTests {
 			connection.close();
 		}
 		assertEquals(3, cachedChannels.get(connections.get(0)).size());
-		assertNull(cachedChannels.get(connections.get(1)));
+		assertEquals(0, cachedChannels.get(connections.get(1)).size());
 		assertEquals(3, cachedTxChannels.get(connections.get(0)).size());
-		assertNull(cachedTxChannels.get(connections.get(1)));
+		assertEquals(0, cachedTxChannels.get(connections.get(1)).size());
 
-		assertEquals(1, openConnections.size());
+		assertEquals(2, allocatedConnections.size());
+		assertEquals("1", connectionFactory.getCacheProperties().get("openConnections"));
 
 		Connection connection = connectionFactory.createConnection();
 		Connection rabbitConnection = TestUtils.getPropertyValue(connection, "target", Connection.class);
 		rabbitConnection.close();
 		Channel channel = connection.createChannel(false);
-		assertEquals(1, openConnections.size());
+		assertEquals(2, allocatedConnections.size());
+		assertEquals("1", connectionFactory.getCacheProperties().get("openConnections"));
 		channel.close();
 		connection.close();
-		assertEquals(1, openConnections.size());
+		assertEquals(2, allocatedConnections.size());
+		assertEquals("1", connectionFactory.getCacheProperties().get("openConnections"));
 	}
 
 	@Test
@@ -289,13 +304,10 @@ public class CachingConnectionFactoryIntegrationTests {
 		// The channel is not transactional
 		exception.expect(AmqpIOException.class);
 
-		template2.execute(new ChannelCallback<Void>() {
-			@Override
-			public Void doInRabbit(Channel channel) throws Exception {
-				// Should be an exception because the channel is not transactional
-				channel.txRollback();
-				return null;
-			}
+		template2.execute(channel -> {
+			// Should be an exception because the channel is not transactional
+			channel.txRollback();
+			return null;
 		});
 
 	}
@@ -305,33 +317,28 @@ public class CachingConnectionFactoryIntegrationTests {
 
 		RabbitTemplate template = new RabbitTemplate(connectionFactory);
 		RabbitAdmin admin = new RabbitAdmin(connectionFactory);
-		Queue queue = new Queue("foo");
+		Queue queue = new Queue(CF_INTEGRATION_TEST_QUEUE);
 		admin.declareQueue(queue);
 		final String route = queue.getName();
 
 		final CountDownLatch latch = new CountDownLatch(1);
 		try {
-			template.execute(new ChannelCallback<Object>() {
-				@Override
-				public Object doInRabbit(Channel channel) throws Exception {
-					channel.getConnection().addShutdownListener(new ShutdownListener() {
-						@Override
-						public void shutdownCompleted(ShutdownSignalException cause) {
-							logger.info("Error", cause);
-							latch.countDown();
-							// This will be thrown on the Connection thread just before it dies, so basically ignored
-							throw new RuntimeException(cause);
-						}
-					});
-					String tag = channel.basicConsume(route, new DefaultConsumer(channel));
-					// Consume twice with the same tag is a hard error (connection will be reset)
-					String result = channel.basicConsume(route, false, tag, new DefaultConsumer(channel));
-					fail("Expected IOException, got: " + result);
-					return null;
-				}
+			template.execute(channel -> {
+				channel.getConnection().addShutdownListener(cause -> {
+					logger.info("Error", cause);
+					latch.countDown();
+					// This will be thrown on the Connection thread just before it dies, so basically ignored
+					throw new RuntimeException(cause);
+				});
+				String tag = channel.basicConsume(route, new DefaultConsumer(channel));
+				// Consume twice with the same tag is a hard error (connection will be reset)
+				String result = channel.basicConsume(route, false, tag, new DefaultConsumer(channel));
+				fail("Expected IOException, got: " + result);
+				return null;
 			});
 			fail("Expected AmqpIOException");
-		} catch (AmqpIOException e) {
+		}
+		catch (AmqpIOException e) {
 			// expected
 		}
 		template.convertAndSend(route, "message");
@@ -365,24 +372,20 @@ public class CachingConnectionFactoryIntegrationTests {
 			public void run() {
 				try {
 					final Socket socket = server.accept();
-					Executors.newSingleThreadExecutor().execute(new Runnable() {
-
-						@Override
-						public void run() {
-							while (!socket.isClosed()) {
+					Executors.newSingleThreadExecutor().execute(() -> {
+						while (!socket.isClosed()) {
+							try {
+								int c = socket.getInputStream().read();
+								if (c >= 0) {
+									proxy.getOutputStream().write(c);
+								}
+							}
+							catch (Exception e) {
 								try {
-									int c = socket.getInputStream().read();
-									if (c >= 0) {
-										proxy.getOutputStream().write(c);
-									}
+									socket.close();
+									proxy.close();
 								}
-								catch (Exception e) {
-									try {
-										socket.close();
-										proxy.close();
-									}
-									catch (Exception ee) {}
-								}
+								catch (Exception ee) { }
 							}
 						}
 					});
@@ -398,7 +401,7 @@ public class CachingConnectionFactoryIntegrationTests {
 								socket.close();
 								proxy.close();
 							}
-							catch (Exception ee) {}
+							catch (Exception ee) { }
 						}
 					}
 					socket.close();

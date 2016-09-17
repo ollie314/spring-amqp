@@ -1,15 +1,19 @@
 /*
- * Copyright 2002-2014 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.springframework.amqp.rabbit.config;
 
 import org.apache.commons.logging.Log;
@@ -74,10 +78,11 @@ public class StatefulRetryOperationsInterceptorFactoryBean extends AbstractRetry
 		retryInterceptor.setNewItemIdentifier(new NewMethodArgumentsIdentifier() {
 			public boolean isNew(Object[] args) {
 				Message message = (Message) args[1];
-				if (newMessageIdentifier == null) {
+				if (StatefulRetryOperationsInterceptorFactoryBean.this.newMessageIdentifier == null) {
 					return !message.getMessageProperties().isRedelivered();
-				} else {
-					return newMessageIdentifier.isNew(message);
+				}
+				else {
+					return StatefulRetryOperationsInterceptorFactoryBean.this.newMessageIdentifier.isNew(message);
 				}
 			}
 		});
@@ -88,7 +93,8 @@ public class StatefulRetryOperationsInterceptorFactoryBean extends AbstractRetry
 				Message message = (Message) args[1];
 				if (messageRecoverer == null) {
 					logger.warn("Message dropped on recovery: " + message, cause);
-				} else {
+				}
+				else {
 					messageRecoverer.recover(message, cause);
 				}
 				// This is actually a normal outcome. It means the recovery was successful, but we don't want to consume
@@ -101,15 +107,16 @@ public class StatefulRetryOperationsInterceptorFactoryBean extends AbstractRetry
 		retryInterceptor.setKeyGenerator(new MethodArgumentsKeyGenerator() {
 			public Object getKey(Object[] args) {
 				Message message = (Message) args[1];
-				if (messageKeyGenerator == null) {
+				if (StatefulRetryOperationsInterceptorFactoryBean.this.messageKeyGenerator == null) {
 					String messageId = message.getMessageProperties().getMessageId();
 					if (messageId == null) {
 						throw new FatalListenerExecutionException(
 								"Illegal null id in message. Failed to manage retry for message: " + message);
 					}
 					return messageId;
-				} else {
-					return messageKeyGenerator.getKey(message);
+				}
+				else {
+					return StatefulRetryOperationsInterceptorFactoryBean.this.messageKeyGenerator.getKey(message);
 				}
 			}
 		});

@@ -2,4 +2,4 @@ rootProject.name = 'spring-amqp-dist'
 
 include 'spring-amqp'
 include 'spring-rabbit'
-
+include 'spring-rabbit-test'
