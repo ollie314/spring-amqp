@@ -15,6 +15,8 @@ IMPORTANT: Previously, a non-transactional `RabbitTemplate` participated in an e
 This was a serious bug; however, users might have relied on this behavior.
 Starting with _version 1.6.2_, you must set the `channelTransacted` boolean on the template for it to participate in the container transaction.
 
+The `AsyncRabbitTemplate` now supports Direct reply-to; see <<async-template>> for more information.
+
 ===== Listener Adapter
 
 A convenient `FunctionalInterface` is available for using lambdas with the `MessageListenerAdapter`.
@@ -29,6 +31,18 @@ This property only applies when using `basicGet` (e.g. from `RabbitTemplate.rece
 
 The connection and channel listener interfaces now provide a mechanism to obtain information about exceptions.
 See <<connection-channel-listeners>> and <<publishing-is-async>> for more information.
+
+A new `ConnectionNameStrategy` is now provided to populate the application-specific identification of the target RabbitMQ connection from the `AbstractConnectionFactory`.
+See <<connections>> for more information.
+
+===== Retry Changes
+
+The `MissingMessageIdAdvice` is no longer provided; it's functionality is now built-in; see <<retry>> for more information.
+
+===== Anonymous Queue Naming
+
+By default, `AnonymousQueues` are now named with the default `Base64UrlNamingStrategy` instead of a simple `UUID` string.
+See <<anonymous-queue>> for more information.
 
 ==== Earlier Releases
 

@@ -24,12 +24,19 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
+import static org.mockito.Matchers.anyBoolean;
+import static org.mockito.Matchers.anyMap;
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -41,9 +48,11 @@ import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
+import org.mockito.ArgumentCaptor;
 
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.Connection;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.ChannelAwareMessageListener;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
@@ -64,6 +73,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.util.backoff.FixedBackOff;
 
 import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Consumer;
 
 /**
  * @author Gary Russell
@@ -87,7 +97,7 @@ public class DirectMessageListenerContainerTests {
 
 	@Rule
 	public Log4jLevelAdjuster adjuster = new Log4jLevelAdjuster(Level.DEBUG,
-			CachingConnectionFactory.class,
+			CachingConnectionFactory.class, DirectReplyToMessageListenerContainer.class,
 			DirectMessageListenerContainer.class, DirectMessageListenerContainerTests.class, BrokerRunning.class);
 
 	@Rule
@@ -282,7 +292,7 @@ public class DirectMessageListenerContainerTests {
 		brokerRunning.getAdmin().deleteQueue(EQ2);
 		assertTrue(latch2.await(10, TimeUnit.SECONDS));
 		assertNotNull(failEvent.get());
-		assertThat(failEvent.get(), instanceOf(ListenerContainerConsumerFailedEvent.class));
+		assertThat(failEvent.get(), instanceOf(ListenerContainerConsumerTerminatedEvent.class));
 		container.stop();
 		cf.destroy();
 	}
@@ -342,6 +352,79 @@ public class DirectMessageListenerContainerTests {
 		assertFalse(container.isActive());
 	}
 
+	@SuppressWarnings("unchecked")
+	@Test
+	public void testRecoverBrokerLoss() throws Exception {
+		ConnectionFactory mockCF = mock(ConnectionFactory.class);
+		Connection connection = mock(Connection.class);
+		Channel channel = mock(Channel.class);
+		given(connection.isOpen()).willReturn(true);
+		given(mockCF.createConnection()).willReturn(connection);
+		given(connection.createChannel(false)).willReturn(channel);
+		given(channel.isOpen()).willReturn(true);
+		final CountDownLatch latch1 = new CountDownLatch(1);
+		final CountDownLatch latch2 = new CountDownLatch(2);
+		ArgumentCaptor<Consumer> consumerCaptor = ArgumentCaptor.forClass(Consumer.class);
+		final String tag = "tag";
+		willAnswer(i -> {
+			latch1.countDown();
+			latch2.countDown();
+			return tag;
+		}).given(channel).basicConsume(eq("foo"), anyBoolean(), anyString(), anyBoolean(), anyBoolean(),
+				anyMap(), consumerCaptor.capture());
+		DirectMessageListenerContainer container = new DirectMessageListenerContainer(mockCF);
+		container.setQueueNames("foo");
+		container.setBeanName("brokerLost");
+		container.setConsumerTagStrategy(q -> "tag");
+		container.setShutdownTimeout(1);
+		container.setMonitorInterval(200);
+		container.setFailedDeclarationRetryInterval(200);
+		container.afterPropertiesSet();
+		container.start();
+		assertTrue(latch1.await(10, TimeUnit.SECONDS));
+		given(channel.isOpen()).willReturn(false);
+		assertTrue(latch2.await(10, TimeUnit.SECONDS));
+		container.setShutdownTimeout(1);
+		container.stop();
+	}
+
+	@SuppressWarnings("unchecked")
+	@Test
+	public void testCancelConsumerBeforeConsumeOk() throws Exception {
+		ConnectionFactory mockCF = mock(ConnectionFactory.class);
+		Connection connection = mock(Connection.class);
+		Channel channel = mock(Channel.class);
+		given(connection.isOpen()).willReturn(true);
+		given(mockCF.createConnection()).willReturn(connection);
+		given(connection.createChannel(false)).willReturn(channel);
+		given(channel.isOpen()).willReturn(true);
+		final CountDownLatch latch1 = new CountDownLatch(1);
+		final CountDownLatch latch2 = new CountDownLatch(1);
+		ArgumentCaptor<Consumer> consumerCaptor = ArgumentCaptor.forClass(Consumer.class);
+		final String tag = "tag";
+		willAnswer(i -> {
+			latch1.countDown();
+			return tag;
+		}).given(channel).basicConsume(eq("foo"), anyBoolean(), anyString(), anyBoolean(), anyBoolean(),
+				anyMap(), consumerCaptor.capture());
+		DirectMessageListenerContainer container = new DirectMessageListenerContainer(mockCF);
+		container.setQueueNames("foo");
+		container.setBeanName("backOff");
+		container.setConsumerTagStrategy(q -> "tag");
+		container.setShutdownTimeout(1);
+		container.afterPropertiesSet();
+		container.start();
+		assertTrue(latch1.await(10, TimeUnit.SECONDS));
+		Consumer consumer = consumerCaptor.getValue();
+		Executors.newSingleThreadExecutor().execute(() -> {
+			container.stop();
+			latch2.countDown();
+		});
+		assertTrue(latch2.await(10, TimeUnit.SECONDS));
+		verify(channel).basicCancel(tag); // canceled properly even without consumeOk
+		consumer.handleCancelOk(tag);
+	}
+
 	@Test
 	public void testRecoverDeletedQueueAutoDeclare() throws Exception {
 		testRecoverDeletedQueueGuts(true);
@@ -394,6 +477,38 @@ public class DirectMessageListenerContainerTests {
 		assertTrue(activeConsumerCount(container, 0));
 		assertEquals(0, TestUtils.getPropertyValue(container, "consumersByQueue", MultiValueMap.class).size());
 		cf.destroy();
+	}
+
+	@Test
+	public void testReplyToReleaseWithCancel() throws Exception {
+		CachingConnectionFactory cf = new CachingConnectionFactory("localhost");
+		DirectReplyToMessageListenerContainer container = new DirectReplyToMessageListenerContainer(cf);
+		container.setBeanName("releaseCancel");
+		container.afterPropertiesSet();
+		container.start();
+		Channel channel = container.getChannel();
+		final CountDownLatch latch = new CountDownLatch(1);
+		container.setApplicationEventPublisher(e -> {
+			if (e instanceof ListenerContainerConsumerTerminatedEvent) {
+				latch.countDown();
+			}
+		});
+		container.releaseConsumerFor(channel, true, "foo");
+		assertTrue(latch.await(10, TimeUnit.SECONDS));
+	}
+
+	@Test
+	public void testReplyToConsumersReduced() throws Exception {
+		CachingConnectionFactory cf = new CachingConnectionFactory("localhost");
+		DirectReplyToMessageListenerContainer container = new DirectReplyToMessageListenerContainer(cf);
+		container.setBeanName("reducing");
+		container.setIdleEventInterval(500);
+		container.afterPropertiesSet();
+		container.start();
+		Channel channel = container.getChannel();
+		assertTrue(activeConsumerCount(container, 1));
+		container.releaseConsumerFor(channel, false, null);
+		assertTrue(activeConsumerCount(container, 0));
 	}
 
 	private boolean consumersOnQueue(String queue, int expected) throws Exception {

@@ -17,7 +17,6 @@
 package org.springframework.amqp.rabbit.core;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -42,7 +41,6 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageListener;
 import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.amqp.core.MessageProperties;
-import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.ReceiveAndReplyCallback;
 import org.springframework.amqp.core.ReceiveAndReplyMessageCallback;
 import org.springframework.amqp.core.ReplyToAddressCallback;
@@ -288,7 +286,7 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 	}
 
 	/**
-	 * The encoding to use when inter-converting between byte arrays and Strings in message properties.
+	 * The encoding to use when converting between byte arrays and Strings in message properties.
 	 *
 	 * @param encoding the encoding to set
 	 */
@@ -296,17 +294,12 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 		this.encoding = encoding;
 	}
 
-
 	/**
-	 * A queue for replies; if not provided, a temporary exclusive, auto-delete queue will
-	 * be used for each reply, unless RabbitMQ supports 'amq.rabbitmq.reply-to' - see
-	 * http://www.rabbitmq.com/direct-reply-to.html
-	 * @deprecated - use #setReplyAddress(String replyAddress)
-	 * @param replyQueue the replyQueue to set
+	 * The encoding used when converting between byte arrays and Strings in message properties.
+	 * @return the encoding.
 	 */
-	@Deprecated
-	public void setReplyQueue(Queue replyQueue) {
-		setReplyAddress(replyQueue.getName());
+	public String getEncoding() {
+		return this.encoding;
 	}
 
 	/**
@@ -402,19 +395,35 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 		this.returnCallback = returnCallback;
 	}
 
+	/**
+	 * Set the mandatory flag when sending messages; only applies if a
+	 * {@link #setReturnCallback(ReturnCallback) returnCallback} had been provided.
+	 * @param mandatory the mandatory to set.
+	 */
 	public void setMandatory(boolean mandatory) {
 		this.mandatoryExpression = new ValueExpression<Boolean>(mandatory);
 	}
 
 	/**
-	 * @param mandatoryExpression a SpEL {@link Expression} to evaluate against each request
-	 * message, if a {@link #returnCallback} has been provided. The result of expression must be
-	 * a {@code boolean} value.
+	 * @param mandatoryExpression a SpEL {@link Expression} to evaluate against each
+	 * request message, if a {@link #setReturnCallback(ReturnCallback) returnCallback} has
+	 * been provided. The result of the evaluation must be a {@code boolean} value.
 	 * @since 1.4
 	 */
 	public void setMandatoryExpression(Expression mandatoryExpression) {
 		Assert.notNull(mandatoryExpression, "'mandatoryExpression' must not be null");
 		this.mandatoryExpression = mandatoryExpression;
+	}
+
+	/**
+	 * @param mandatoryExpression a SpEL {@link Expression} to evaluate against each
+	 * request message, if a {@link #setReturnCallback(ReturnCallback) returnCallback} has
+	 * been provided. The result of the evaluation must be a {@code boolean} value.
+	 * @since 2.0
+	 */
+	public void setMandatoryExpressionString(String mandatoryExpression) {
+		Assert.notNull(mandatoryExpression, "'mandatoryExpression' must not be null");
+		this.mandatoryExpression = PARSER.parseExpression(mandatoryExpression);
 	}
 
 	/**
@@ -516,16 +525,6 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 		Assert.notNull(beforePublishPostProcessors, "'beforePublishPostProcessors' cannot be null");
 		Assert.noNullElements(beforePublishPostProcessors, "'beforePublishPostProcessors' cannot have null elements");
 		this.beforePublishPostProcessors = MessagePostProcessorUtils.sort(Arrays.asList(beforePublishPostProcessors));
-	}
-
-	/**
-	 * @deprecated use {@link #setAfterReceivePostProcessors(MessagePostProcessor...)}
-	 * @param afterReceivePostProcessors the post processors.
-	 * @since 1.4.2
-	 */
-	@Deprecated
-	public void setAfterReceivePostProcessor(MessagePostProcessor... afterReceivePostProcessors) {
-		setAfterReceivePostProcessors(afterReceivePostProcessors);
 	}
 
 	/**
@@ -753,12 +752,6 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 	public void convertAndSend(Object object) throws AmqpException {
 		convertAndSend(this.exchange, this.routingKey, object, (CorrelationData) null);
 	}
-
-	@Deprecated
-	public void correlationconvertAndSend(Object object, CorrelationData correlationData) throws AmqpException {
-		this.correlationConvertAndSend(object, correlationData);
-	}
-
 
 	public void correlationConvertAndSend(Object object, CorrelationData correlationData) throws AmqpException {
 		convertAndSend(this.exchange, this.routingKey, object, correlationData);
@@ -1064,10 +1057,10 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 							if (correlation == null) {
 								String messageId = receiveMessageProperties.getMessageId();
 								if (messageId != null) {
-									correlation = messageId.getBytes(RabbitTemplate.this.encoding);
+									correlation = messageId;
 								}
 							}
-							replyMessageProperties.setCorrelationId((byte[]) correlation);
+							replyMessageProperties.setCorrelationId((String) correlation);
 						}
 						else {
 							replyMessageProperties.setHeader(RabbitTemplate.this.correlationKey, correlation);
@@ -1079,8 +1072,7 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 								replyTo.getExchangeName(),
 								replyTo.getRoutingKey(),
 								replyMessage,
-								RabbitTemplate.this.returnCallback != null && RabbitTemplate.this.mandatoryExpression
-										.getValue(RabbitTemplate.this.evaluationContext, replyMessage, Boolean.class),
+								RabbitTemplate.this.returnCallback != null && isMandatoryFor(replyMessage),
 								null);
 					}
 					else if (channelLocallyTransacted) {
@@ -1304,10 +1296,9 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 				message.getMessageProperties().setReplyTo(RabbitTemplate.this.replyAddress);
 				String savedCorrelation = null;
 				if (RabbitTemplate.this.correlationKey == null) { // using standard correlationId property
-					byte[] correlationId = message.getMessageProperties().getCorrelationId();
+					String correlationId = message.getMessageProperties().getCorrelationId();
 					if (correlationId != null) {
-						savedCorrelation = new String(correlationId,
-								RabbitTemplate.this.encoding);
+						savedCorrelation = correlationId;
 					}
 				}
 				else {
@@ -1316,12 +1307,10 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 				}
 				pendingReply.setSavedCorrelation(savedCorrelation);
 				if (RabbitTemplate.this.correlationKey == null) { // using standard correlationId property
-					message.getMessageProperties().setCorrelationId(messageTag
-							.getBytes(RabbitTemplate.this.encoding));
+					message.getMessageProperties().setCorrelationId(messageTag);
 				}
 				else {
-					message.getMessageProperties().setHeader(
-							RabbitTemplate.this.correlationKey, messageTag);
+					message.getMessageProperties().setHeader(RabbitTemplate.this.correlationKey, messageTag);
 				}
 
 				if (logger.isDebugEnabled()) {
@@ -1344,13 +1333,23 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 			final CorrelationData correlationData, Channel channel, final PendingReply pendingReply, String messageTag)
 			throws Exception {
 		Message reply;
-		boolean mandatory = this.mandatoryExpression.getValue(this.evaluationContext, message, Boolean.class);
+		boolean mandatory = isMandatoryFor(message);
 		if (mandatory && this.returnCallback == null) {
 			message.getMessageProperties().getHeaders().put(RETURN_CORRELATION_KEY, messageTag);
 		}
 		doSend(channel, exchange, routingKey, message, mandatory, correlationData);
 		reply = this.replyTimeout < 0 ? pendingReply.get() : pendingReply.get(this.replyTimeout, TimeUnit.MILLISECONDS);
 		return reply;
+	}
+
+	/**
+	 * Return whether the provided message should be sent with the mandatory flag set.
+	 * @param message the message.
+	 * @return true for mandatory.
+	 * @since 2.0
+	 */
+	public Boolean isMandatoryFor(final Message message) {
+		return this.mandatoryExpression.getValue(this.evaluationContext, message, Boolean.class);
 	}
 
 	@Override
@@ -1464,7 +1463,7 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 	 * @param correlationData The correlation data.
 	 * @throws IOException If thrown by RabbitMQ API methods
 	 */
-	protected void doSend(Channel channel, String exchange, String routingKey, Message message,
+	public void doSend(Channel channel, String exchange, String routingKey, Message message,
 			boolean mandatory, CorrelationData correlationData) throws Exception {
 		if (exchange == null) {
 			// try to send to configured exchange
@@ -1591,7 +1590,12 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 		return replyTo;
 	}
 
-	private void addListener(Channel channel) {
+	/**
+	 * Add this template as a confirms listener for the provided channel.
+	 * @param channel the channel.
+	 * @since 2.0
+	 */
+	public void addListener(Channel channel) {
 		if (channel instanceof PublisherCallbackChannel) {
 			PublisherCallbackChannel publisherCallbackChannel = (PublisherCallbackChannel) channel;
 			Channel key = channel instanceof ChannelProxy ? ((ChannelProxy) channel).getTargetChannel() : channel;
@@ -1691,62 +1695,55 @@ public class RabbitTemplate extends RabbitAccessor implements BeanFactoryAware, 
 
 	@Override
 	public void onMessage(Message message) {
-		try {
-			String messageTag;
-			if (this.correlationKey == null) { // using standard correlationId property
-				messageTag = new String(message.getMessageProperties().getCorrelationId(), this.encoding);
-			}
-			else {
-				messageTag = (String) message.getMessageProperties()
-						.getHeaders().get(this.correlationKey);
-			}
-			if (messageTag == null) {
-				logger.error("No correlation header in reply");
-				return;
-			}
+		String messageTag;
+		if (this.correlationKey == null) { // using standard correlationId property
+			messageTag = message.getMessageProperties().getCorrelationId();
+		}
+		else {
+			messageTag = (String) message.getMessageProperties()
+					.getHeaders().get(this.correlationKey);
+		}
+		if (messageTag == null) {
+			logger.error("No correlation header in reply");
+			return;
+		}
 
-			PendingReply pendingReply = this.replyHolder.get(messageTag);
-			if (pendingReply == null) {
-				if (logger.isWarnEnabled()) {
-					logger.warn("Reply received after timeout for " + messageTag);
-				}
-				throw new AmqpRejectAndDontRequeueException("Reply received after timeout");
+		PendingReply pendingReply = this.replyHolder.get(messageTag);
+		if (pendingReply == null) {
+			if (logger.isWarnEnabled()) {
+				logger.warn("Reply received after timeout for " + messageTag);
 			}
-			else {
-				// Restore the inbound correlation data
-				String savedCorrelation = pendingReply.getSavedCorrelation();
-				if (this.correlationKey == null) {
-					if (savedCorrelation == null) {
-						message.getMessageProperties().setCorrelationId(null);
-					}
-					else {
-						message.getMessageProperties().setCorrelationId(
-								savedCorrelation.getBytes(this.encoding));
-					}
+			throw new AmqpRejectAndDontRequeueException("Reply received after timeout");
+		}
+		else {
+			// Restore the inbound correlation data
+			String savedCorrelation = pendingReply.getSavedCorrelation();
+			if (this.correlationKey == null) {
+				if (savedCorrelation == null) {
+					message.getMessageProperties().setCorrelationId(null);
 				}
 				else {
-					if (savedCorrelation != null) {
-						message.getMessageProperties().setHeader(this.correlationKey,
-							savedCorrelation);
-					}
-					else {
-						message.getMessageProperties().getHeaders().remove(this.correlationKey);
-					}
-				}
-				// Restore any inbound replyTo
-				String savedReplyTo = pendingReply.getSavedReplyTo();
-				message.getMessageProperties().setReplyTo(savedReplyTo);
-				pendingReply.reply(message);
-				if (logger.isDebugEnabled()) {
-					logger.debug("Reply received for " + messageTag);
-					if (savedReplyTo != null) {
-						logger.debug("Restored replyTo to " + savedReplyTo);
-					}
+					message.getMessageProperties().setCorrelationId(savedCorrelation);
 				}
 			}
-		}
-		catch (UnsupportedEncodingException e) {
-			throw new AmqpIllegalStateException("Invalid Character Set:" + this.encoding, e);
+			else {
+				if (savedCorrelation != null) {
+					message.getMessageProperties().setHeader(this.correlationKey, savedCorrelation);
+				}
+				else {
+					message.getMessageProperties().getHeaders().remove(this.correlationKey);
+				}
+			}
+			// Restore any inbound replyTo
+			String savedReplyTo = pendingReply.getSavedReplyTo();
+			message.getMessageProperties().setReplyTo(savedReplyTo);
+			pendingReply.reply(message);
+			if (logger.isDebugEnabled()) {
+				logger.debug("Reply received for " + messageTag);
+				if (savedReplyTo != null) {
+					logger.debug("Restored replyTo to " + savedReplyTo);
+				}
+			}
 		}
 	}
 

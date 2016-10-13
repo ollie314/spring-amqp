@@ -30,6 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 
 import org.aopalliance.aop.Advice;
+import org.apache.commons.logging.Log;
 
 import org.springframework.amqp.AmqpConnectException;
 import org.springframework.amqp.AmqpIOException;
@@ -54,6 +55,7 @@ import org.springframework.amqp.rabbit.listener.exception.FatalListenerStartupEx
 import org.springframework.amqp.rabbit.listener.exception.ListenerExecutionFailedException;
 import org.springframework.amqp.rabbit.support.DefaultMessagePropertiesConverter;
 import org.springframework.amqp.rabbit.support.MessagePropertiesConverter;
+import org.springframework.amqp.support.ConditionalExceptionLogger;
 import org.springframework.amqp.support.ConsumerTagStrategy;
 import org.springframework.amqp.support.converter.MessageConversionException;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -78,6 +80,7 @@ import org.springframework.util.backoff.BackOff;
 import org.springframework.util.backoff.FixedBackOff;
 
 import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.ShutdownSignalException;
 
 /**
  * @author Mark Pollack
@@ -187,6 +190,11 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 
 	private volatile long lastReceive = System.currentTimeMillis();
 
+	private boolean statefulRetryFatalWithNullMessageId = true;
+
+	private ConditionalExceptionLogger exclusiveConsumerExceptionLogger = new DefaultExclusiveConsumerLogger();
+
+
 	/**
 	 * {@inheritDoc}
 	 * @since 1.5
@@ -218,7 +226,7 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 	 * @param acknowledgeMode the acknowledge mode to set. Defaults to {@link AcknowledgeMode#AUTO}
 	 * @see AcknowledgeMode
 	 */
-	public void setAcknowledgeMode(AcknowledgeMode acknowledgeMode) {
+	public final void setAcknowledgeMode(AcknowledgeMode acknowledgeMode) {
 		this.acknowledgeMode = acknowledgeMode;
 	}
 
@@ -849,6 +857,36 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 		return this.failedDeclarationRetryInterval;
 	}
 
+	protected boolean isStatefulRetryFatalWithNullMessageId() {
+		return this.statefulRetryFatalWithNullMessageId;
+	}
+
+	/**
+	 * Set whether a message with a null messageId is fatal for the consumer
+	 * when using stateful retry. When false, instead of stopping the consumer,
+	 * the message is rejected and not requeued - it will be discarded or routed
+	 * to the dead letter queue, if so configured. Default true.
+	 * @param statefulRetryFatalWithNullMessageId true for fatal.
+	 * @since 2.0
+	 */
+	public void setStatefulRetryFatalWithNullMessageId(boolean statefulRetryFatalWithNullMessageId) {
+		this.statefulRetryFatalWithNullMessageId = statefulRetryFatalWithNullMessageId;
+	}
+
+	/**
+	 * Set a {@link ConditionalExceptionLogger} for logging exclusive consumer failures. The
+	 * default is to log such failures at WARN level.
+	 * @param exclusiveConsumerExceptionLogger the conditional exception logger.
+	 * @since 1.5
+	 */
+	public void setExclusiveConsumerExceptionLogger(ConditionalExceptionLogger exclusiveConsumerExceptionLogger) {
+		this.exclusiveConsumerExceptionLogger = exclusiveConsumerExceptionLogger;
+	}
+
+	protected ConditionalExceptionLogger getExclusiveConsumerExceptionLogger() {
+		return this.exclusiveConsumerExceptionLogger;
+	}
+
 	/**
 	 * Delegates to {@link #validateConfiguration()} and {@link #initialize()}.
 	 */
@@ -1146,6 +1184,17 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 			}
 		}
 		catch (Exception ex) {
+			if (messageIn.getMessageProperties().isFinalRetryForMessageWithNoId()) {
+				if (this.statefulRetryFatalWithNullMessageId) {
+					throw new FatalListenerExecutionException(
+							"Illegal null id in message. Failed to manage retry for message: " + messageIn);
+				}
+				else {
+					throw new ListenerExecutionFailedException("Cannot retry message more than once without an ID",
+							new AmqpRejectAndDontRequeueException("Not retryable; rejecting and not requeuing", ex),
+									messageIn);
+				}
+			}
 			handleListenerException(ex);
 			throw ex;
 		}
@@ -1342,7 +1391,8 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 	protected final void publishConsumerFailedEvent(String reason, boolean fatal, Throwable t) {
 		if (this.applicationEventPublisher != null) {
 			this.applicationEventPublisher
-					.publishEvent(new ListenerContainerConsumerFailedEvent(this, reason, t, fatal));
+					.publishEvent(t == null ? new ListenerContainerConsumerTerminatedEvent(this, reason) :
+							new ListenerContainerConsumerFailedEvent(this, reason, t, fatal));
 		}
 	}
 
@@ -1477,6 +1527,35 @@ public abstract class AbstractMessageListenerContainer extends RabbitAccessor
 
 		protected WrappedTransactionException(Throwable cause) {
 			super(cause);
+		}
+
+	}
+
+	/**
+	 * Default implementation of {@link ConditionalExceptionLogger} for logging exclusive
+	 * consumer failures.
+	 * @since 1.5
+	 */
+	private static class DefaultExclusiveConsumerLogger implements ConditionalExceptionLogger {
+
+		@Override
+		public void log(Log logger, String message, Throwable t) {
+			if (t instanceof ShutdownSignalException) {
+				ShutdownSignalException cause = (ShutdownSignalException) t;
+				if (RabbitUtils.isExclusiveUseChannelClose(cause)) {
+					if (logger.isWarnEnabled()) {
+						logger.warn(message + ": " + cause.toString());
+					}
+				}
+				else if (!RabbitUtils.isNormalChannelClose(cause)) {
+					logger.error(message + ": " + cause.getMessage());
+				}
+			}
+			else {
+				if (logger.isErrorEnabled()) {
+					logger.error("Unexpected invocation of " + this.getClass() + ", with message: " + message, t);
+				}
+			}
 		}
 
 	}
